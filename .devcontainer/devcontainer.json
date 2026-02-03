@@ -4,7 +4,7 @@
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
-  "postCreateCommand": "npm install && npm --prefix shared install && npm --prefix server install && npm --prefix web install",
+  "postCreateCommand": "npm install && npm --prefix shared install && npm --prefix server install && npm --prefix web install && npm install -g @openai/codex",
   "forwardPorts": [5173, 5178],
   "portsAttributes": {
     "5173": {
