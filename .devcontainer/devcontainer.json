@@ -1,0 +1,27 @@
+{
+  "name": "ai-shogun",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "npm install && npm --prefix shared install && npm --prefix server install && npm --prefix web install",
+  "forwardPorts": [5173, 5178],
+  "portsAttributes": {
+    "5173": {
+      "label": "web (Vite)",
+      "onAutoForward": "openBrowser"
+    },
+    "5178": {
+      "label": "server",
+      "onAutoForward": "notify"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  }
+}
