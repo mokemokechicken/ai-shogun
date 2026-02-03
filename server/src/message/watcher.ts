@@ -12,6 +12,8 @@ export interface MessageWatcherHandlers {
   onMessage: (_message: ShogunMessage) => Promise<void> | void;
 }
 
+const isNoEntryError = (error: unknown) => (error as NodeJS.ErrnoException)?.code === "ENOENT";
+
 const parsePath = (filePath: string, baseDir: string) => {
   const relative = path.relative(baseDir, filePath);
   const parts = relative.split(path.sep);
@@ -59,9 +61,27 @@ export const startMessageWatcher = (
       const parsed = parsePath(filePath, baseDir);
       if (!parsed) return;
       const { to, from, fileName } = parsed;
-      const stat = await fs.stat(filePath);
+      let stat;
+      try {
+        stat = await fs.stat(filePath);
+      } catch (error) {
+        if (isNoEntryError(error)) {
+          logger?.warn("message file missing before stat", { filePath });
+          return;
+        }
+        throw error;
+      }
       const createdAt = stat.mtime.toISOString();
-      const body = await fs.readFile(filePath, "utf-8");
+      let body: string;
+      try {
+        body = await fs.readFile(filePath, "utf-8");
+      } catch (error) {
+        if (isNoEntryError(error)) {
+          logger?.warn("message file missing before read", { filePath });
+          return;
+        }
+        throw error;
+      }
       const parsedTitle = parseTitle(fileName);
       const threadId = parsedTitle.threadId ?? stateStore.getLastActiveThread();
       if (!threadId) {
@@ -91,7 +111,15 @@ export const startMessageWatcher = (
 
       const historyPath = path.join(historyDir, threadId, "message_to", to, "from", from, `${fileName}.md`);
       await ensureDir(path.dirname(historyPath));
-      await fs.rename(filePath, historyPath);
+      try {
+        await fs.rename(filePath, historyPath);
+      } catch (error) {
+        if (isNoEntryError(error)) {
+          logger?.warn("message file missing during move", { filePath, historyPath });
+        } else {
+          throw error;
+        }
+      }
       await historyStore.appendMessage(threadId, message);
     } catch (error) {
       logger?.error("message watcher add error", { error, filePath });
