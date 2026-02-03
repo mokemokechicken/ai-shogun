@@ -15,16 +15,17 @@ from は自動で補完されるため書かなくて構いません。
 {"to":"karou","title":"status_update","body":"line1\\nline2"}
 \`\`\`
 
-禁止事項:
-- shell コマンドやファイル操作は行わないでください。
-- 上記以外の方法で他エージェントに連絡しないでください。
-- 連絡が必要な場合は send_message ブロックのみを出力し、余計な文章は書かないでください。
 `;
 
 const toolPrompt = `
 ツール呼び出し:
 - getAshigaruStatus を使いたい場合は、以下の行を単独で出力してください。
   TOOL:getAshigaruStatus
+- waitForMessage を使いたい場合は、以下の行を単独で出力してください。
+  TOOL:waitForMessage
+  timeoutMs を指定する場合は TOOL:waitForMessage timeoutMs=60000 のように書いてください。
+  timeoutMs を省略した場合は 60000ms でタイムアウトします。
+  TOOL_RESULT waitForMessage は JSON で返ります。status は message / timeout です。
 - 返答は TOOL_RESULT で返ります。結果を受け取ったら続行してください。
 `;
 

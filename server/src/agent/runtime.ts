@@ -5,6 +5,8 @@ import type { StateStore } from "../state/store.js";
 import type { LlmProvider } from "../provider/types.js";
 
 const sendMessageRegex = /```send_message\s*([\s\S]*?)```/g;
+const waitForMessageRegex = /^TOOL:waitForMessage(?:\s+timeoutMs=(\d+))?\s*$/;
+const defaultWaitTimeoutMs = 60_000;
 
 const parseSendMessages = (output: string) => {
   const messages: Array<{ to: string; title: string; body: string }> = [];
@@ -24,7 +26,28 @@ const parseSendMessages = (output: string) => {
   return messages;
 };
 
-const hasToolRequest = (output: string) => output.split("\n").some((line) => line.trim() === "TOOL:getAshigaruStatus");
+type ToolRequest =
+  | { name: "getAshigaruStatus" }
+  | { name: "waitForMessage"; timeoutMs?: number };
+
+const parseToolRequest = (output: string): ToolRequest | null => {
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed === "TOOL:getAshigaruStatus") {
+      return { name: "getAshigaruStatus" };
+    }
+    const waitMatch = trimmed.match(waitForMessageRegex);
+    if (waitMatch) {
+      const timeoutMs = waitMatch[1] ? Number(waitMatch[1]) : undefined;
+      if (Number.isFinite(timeoutMs) && timeoutMs !== undefined) {
+        return { name: "waitForMessage", timeoutMs: Math.max(0, timeoutMs) };
+      }
+      return { name: "waitForMessage" };
+    }
+  }
+  return null;
+};
 
 export interface AgentRuntimeOptions {
   agentId: AgentId;
@@ -46,12 +69,18 @@ export class AgentRuntime {
   private activeThreadId: string | undefined;
   private abortController: AbortController | null = null;
   private stopRequested = false;
+  private messageWaiter: {
+    threadId: string;
+    resolve: (message: ShogunMessage | null) => void;
+    timer?: NodeJS.Timeout;
+  } | null = null;
 
   constructor(options: AgentRuntimeOptions) {
     this.options = options;
   }
 
   enqueue(message: ShogunMessage) {
+    if (this.tryResolveMessageWaiter(message)) return;
     this.queue.push(message);
     void this.processQueue();
   }
@@ -69,6 +98,7 @@ export class AgentRuntime {
   stop() {
     this.stopRequested = true;
     this.queue = [];
+    this.resolveMessageWaiter(null);
     if (this.abortController) {
       this.abortController.abort();
     }
@@ -77,6 +107,55 @@ export class AgentRuntime {
   private setBusy(value: boolean) {
     this.busy = value;
     this.options.onStatusChange?.();
+  }
+
+  private resolveMessageWaiter(message: ShogunMessage | null) {
+    if (!this.messageWaiter) return;
+    const waiter = this.messageWaiter;
+    this.messageWaiter = null;
+    if (waiter.timer) {
+      clearTimeout(waiter.timer);
+    }
+    waiter.resolve(message);
+  }
+
+  private tryResolveMessageWaiter(message: ShogunMessage) {
+    if (!this.messageWaiter) return false;
+    if (message.threadId !== this.messageWaiter.threadId) return false;
+    this.resolveMessageWaiter(message);
+    return true;
+  }
+
+  private popQueuedMessage(threadId: string) {
+    const index = this.queue.findIndex((entry) => entry.threadId === threadId);
+    if (index === -1) return null;
+    const [message] = this.queue.splice(index, 1);
+    return message ?? null;
+  }
+
+  private async waitForMessage(threadId: string, timeoutMs?: number) {
+    const queued = this.popQueuedMessage(threadId);
+    if (queued) return queued;
+
+    if (this.messageWaiter) {
+      this.resolveMessageWaiter(null);
+    }
+
+    const effectiveTimeoutMs =
+      typeof timeoutMs === "number" && Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : defaultWaitTimeoutMs;
+
+    return await new Promise<ShogunMessage | null>((resolve) => {
+      const waiter = { threadId, resolve, timer: undefined as NodeJS.Timeout | undefined };
+      if (effectiveTimeoutMs > 0) {
+        waiter.timer = setTimeout(() => {
+          if (this.messageWaiter === waiter) {
+            this.messageWaiter = null;
+          }
+          resolve(null);
+        }, effectiveTimeoutMs);
+      }
+      this.messageWaiter = waiter;
+    });
   }
 
   private async ensureSession(threadId: string) {
@@ -170,12 +249,23 @@ export class AgentRuntime {
         abortSignal: this.abortController?.signal
       });
       output = result.outputText ?? "";
-      if (this.options.role === "karou" && hasToolRequest(output)) {
-        const status = this.options.getAshigaruStatus?.();
-        const idle = status?.idle ?? [];
-        const busy = status?.busy ?? [];
-        input = `TOOL_RESULT getAshigaruStatus: idle=${idle.join(",")} busy=${busy.join(",")}`;
-        continue;
+      if (this.options.role === "karou") {
+        const toolRequest = parseToolRequest(output);
+        if (toolRequest?.name === "getAshigaruStatus") {
+          const status = this.options.getAshigaruStatus?.();
+          const idle = status?.idle ?? [];
+          const busy = status?.busy ?? [];
+          input = `TOOL_RESULT getAshigaruStatus: idle=${idle.join(",")} busy=${busy.join(",")}`;
+          continue;
+        }
+        if (toolRequest?.name === "waitForMessage") {
+          const waited = await this.waitForMessage(message.threadId, toolRequest.timeoutMs);
+          const payload = waited
+            ? { status: "message", message: waited }
+            : { status: "timeout", timeoutMs: toolRequest.timeoutMs ?? defaultWaitTimeoutMs };
+          input = `TOOL_RESULT waitForMessage: ${JSON.stringify(payload)}`;
+          continue;
+        }
       }
       break;
     }
