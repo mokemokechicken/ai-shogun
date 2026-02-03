@@ -6,6 +6,7 @@ import type { ShogunMessage } from "@ai-shogun/shared";
 import { ensureDir } from "../utils.js";
 import type { HistoryStore } from "../history/store.js";
 import type { StateStore } from "../state/store.js";
+import type { Logger } from "../logger.js";
 
 export interface MessageWatcherHandlers {
   onMessage: (_message: ShogunMessage) => Promise<void> | void;
@@ -37,10 +38,12 @@ export const startMessageWatcher = (
   historyDir: string,
   historyStore: HistoryStore,
   stateStore: StateStore,
-  handlers: MessageWatcherHandlers
+  handlers: MessageWatcherHandlers,
+  logger?: Logger
 ) => {
   const watchPath = path.join(baseDir, "message_to");
   const usePolling = process.env.SHOGUN_WATCH_POLLING === "1" || process.env.VITEST === "true";
+  logger?.info("message watcher started", { watchPath, usePolling });
   const watcher = chokidar.watch(watchPath, {
     ignoreInitial: false,
     usePolling,
@@ -52,32 +55,51 @@ export const startMessageWatcher = (
   });
 
   watcher.on("add", async (filePath) => {
-    const parsed = parsePath(filePath, baseDir);
-    if (!parsed) return;
-    const { to, from, fileName } = parsed;
-    const stat = await fs.stat(filePath);
-    const createdAt = stat.mtime.toISOString();
-    const body = await fs.readFile(filePath, "utf-8");
-    const parsedTitle = parseTitle(fileName);
-    const threadId = parsedTitle.threadId ?? stateStore.getLastActiveThread();
-    if (!threadId) return;
+    try {
+      const parsed = parsePath(filePath, baseDir);
+      if (!parsed) return;
+      const { to, from, fileName } = parsed;
+      const stat = await fs.stat(filePath);
+      const createdAt = stat.mtime.toISOString();
+      const body = await fs.readFile(filePath, "utf-8");
+      const parsedTitle = parseTitle(fileName);
+      const threadId = parsedTitle.threadId ?? stateStore.getLastActiveThread();
+      if (!threadId) {
+        logger?.warn("message ignored: threadId missing", { filePath, to, from, fileName });
+        return;
+      }
 
-    const message: ShogunMessage = {
-      id: nanoid(),
-      threadId,
-      from: from as ShogunMessage["from"],
-      to: to as ShogunMessage["to"],
-      title: parsedTitle.title,
-      body,
-      createdAt
-    };
+      const message: ShogunMessage = {
+        id: nanoid(),
+        threadId,
+        from: from as ShogunMessage["from"],
+        to: to as ShogunMessage["to"],
+        title: parsedTitle.title,
+        body,
+        createdAt
+      };
 
-    await handlers.onMessage(message);
+      logger?.info("message file detected", {
+        threadId,
+        from: message.from,
+        to: message.to,
+        title: message.title,
+        filePath
+      });
 
-    const historyPath = path.join(historyDir, threadId, "message_to", to, "from", from, `${fileName}.md`);
-    await ensureDir(path.dirname(historyPath));
-    await fs.rename(filePath, historyPath);
-    await historyStore.appendMessage(threadId, message);
+      await handlers.onMessage(message);
+
+      const historyPath = path.join(historyDir, threadId, "message_to", to, "from", from, `${fileName}.md`);
+      await ensureDir(path.dirname(historyPath));
+      await fs.rename(filePath, historyPath);
+      await historyStore.appendMessage(threadId, message);
+    } catch (error) {
+      logger?.error("message watcher add error", { error, filePath });
+    }
+  });
+
+  watcher.on("error", (error) => {
+    logger?.error("message watcher error", { error });
   });
 
   return watcher;

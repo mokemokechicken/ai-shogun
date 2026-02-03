@@ -6,6 +6,7 @@ import { CodexProvider } from "../provider/codex.js";
 import type { StateStore } from "../state/store.js";
 import { AgentRuntime } from "./runtime.js";
 import { buildSystemPrompt } from "../prompt.js";
+import type { Logger } from "../logger.js";
 
 interface AgentDefinition {
   id: AgentId;
@@ -19,10 +20,12 @@ export class AgentManager {
   private runtimes = new Map<AgentId, AgentRuntime>();
   private agents: AgentDefinition[] = [];
   private statusListeners: Array<() => void> = [];
+  private logger?: Logger;
 
-  constructor(config: AppConfig, stateStore: StateStore) {
+  constructor(config: AppConfig, stateStore: StateStore, logger?: Logger) {
     this.config = config;
     this.stateStore = stateStore;
+    this.logger = logger;
     this.buildAgents();
   }
 
@@ -68,7 +71,8 @@ export class AgentManager {
         provider: agent.provider,
         workingDirectory: this.config.rootDir,
         onStatusChange: () => this.notifyStatus(),
-        getAshigaruStatus: () => this.getAshigaruStatus()
+        getAshigaruStatus: () => this.getAshigaruStatus(),
+        logger: this.logger
       });
       this.runtimes.set(agent.id, runtime);
     }
@@ -97,16 +101,28 @@ export class AgentManager {
     if (!thread) return;
     for (const agent of this.agents) {
       if (thread.sessions[agent.id]) continue;
+      this.logger?.info("initializing agent thread", { agentId: agent.id, role: agent.role, threadId });
       const systemPrompt = buildSystemPrompt({
         role: agent.role,
         agentId: agent.id,
         baseDir: this.config.baseDir,
         historyDir: this.config.historyDir
       });
-      const created = await agent.provider.createThread({
-        workingDirectory: this.config.rootDir,
-        initialInput: `${systemPrompt}\n\n準備ができたらACKとだけ返答してください。`
-      });
+      let created;
+      try {
+        created = await agent.provider.createThread({
+          workingDirectory: this.config.rootDir,
+          initialInput: `${systemPrompt}\n\n準備ができたらACKとだけ返答してください。`
+        });
+      } catch (error) {
+        this.logger?.error("failed to create agent thread", {
+          agentId: agent.id,
+          role: agent.role,
+          threadId,
+          error
+        });
+        throw error;
+      }
       this.stateStore.setSession(threadId, agent.id, {
         provider: agent.provider.kind,
         threadId: created.id,
@@ -118,7 +134,10 @@ export class AgentManager {
 
   enqueue(to: AgentId, message: ShogunMessage) {
     const runtime = this.runtimes.get(to);
-    if (!runtime) return;
+    if (!runtime) {
+      this.logger?.warn("enqueue dropped: runtime missing", { to, threadId: message.threadId });
+      return;
+    }
     runtime.enqueue(message);
   }
 

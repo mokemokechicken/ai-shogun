@@ -3,10 +3,12 @@ import { buildSystemPrompt } from "../prompt.js";
 import { writeMessageFile } from "../message/writer.js";
 import type { StateStore } from "../state/store.js";
 import type { LlmProvider } from "../provider/types.js";
+import type { Logger } from "../logger.js";
 
 const sendMessageRegex = /```send_message\s*([\s\S]*?)```/g;
 const waitForMessageRegex = /^TOOL:waitForMessage(?:\s+timeoutMs=(\d+))?\s*$/;
 const defaultWaitTimeoutMs = 60_000;
+const maxLoggedOutputChars = 4000;
 
 const parseSendMessages = (output: string) => {
   const messages: Array<{ to: string; title: string; body: string }> = [];
@@ -49,6 +51,15 @@ const parseToolRequest = (output: string): ToolRequest | null => {
   return null;
 };
 
+const shouldLogOutput = () => process.env.SHOGUN_LOG_OUTPUT === "1";
+
+const toLoggedOutput = (value: string) => {
+  if (value.length <= maxLoggedOutputChars) {
+    return { output: value, truncated: false };
+  }
+  return { output: value.slice(0, maxLoggedOutputChars), truncated: true };
+};
+
 export interface AgentRuntimeOptions {
   agentId: AgentId;
   role: "shogun" | "karou" | "ashigaru";
@@ -60,6 +71,7 @@ export interface AgentRuntimeOptions {
   workingDirectory: string;
   onStatusChange?: () => void;
   getAshigaruStatus?: () => { idle: AgentId[]; busy: AgentId[] };
+  logger?: Logger;
 }
 
 export class AgentRuntime {
@@ -82,6 +94,14 @@ export class AgentRuntime {
   enqueue(message: ShogunMessage) {
     if (this.tryResolveMessageWaiter(message)) return;
     this.queue.push(message);
+    this.options.logger?.info("agent message enqueued", {
+      agentId: this.options.agentId,
+      threadId: message.threadId,
+      from: message.from,
+      to: message.to,
+      title: message.title,
+      queueSize: this.queue.length
+    });
     void this.processQueue();
   }
 
@@ -171,6 +191,10 @@ export class AgentRuntime {
       historyDir: this.options.historyDir
     });
     if (!session) {
+      this.options.logger?.info("agent session create", {
+        agentId: this.options.agentId,
+        threadId
+      });
       const created = await this.options.provider.createThread({
         workingDirectory: this.options.workingDirectory,
         initialInput: `${systemPrompt}\n\n準備ができたらACKとだけ返答してください。`
@@ -181,6 +205,11 @@ export class AgentRuntime {
       return session.threadId;
     }
     if (!session.initialized) {
+      this.options.logger?.info("agent session initializing", {
+        agentId: this.options.agentId,
+        threadId,
+        provider: session.provider
+      });
       await this.options.provider.sendMessage({
         threadId: session.threadId,
         input: `${systemPrompt}\n\n準備ができたらACKとだけ返答してください。`
@@ -204,6 +233,13 @@ export class AgentRuntime {
     }
     this.activeThreadId = message.threadId;
     try {
+      this.options.logger?.info("agent message processing started", {
+        agentId: this.options.agentId,
+        threadId: message.threadId,
+        from: message.from,
+        to: message.to,
+        title: message.title
+      });
       const sessionThreadId = await this.ensureSession(message.threadId);
       this.abortController = new AbortController();
       const output = await this.runWithTools(sessionThreadId, message);
@@ -222,6 +258,14 @@ export class AgentRuntime {
         });
       }
     } catch (error) {
+      this.options.logger?.error("agent message processing failed", {
+        agentId: this.options.agentId,
+        threadId: message.threadId,
+        from: message.from,
+        to: message.to,
+        title: message.title,
+        error
+      });
       console.error(`[agent:${this.options.agentId}]`, error);
     } finally {
       this.abortController = null;
@@ -243,12 +287,36 @@ export class AgentRuntime {
     const maxLoops = 3;
     for (let i = 0; i < maxLoops; i += 1) {
       if (this.stopRequested) break;
+      const startedAt = Date.now();
+      this.options.logger?.info("provider sendMessage start", {
+        agentId: this.options.agentId,
+        threadId,
+        loop: i + 1
+      });
       const result = await this.options.provider.sendMessage({
         threadId,
         input,
         abortSignal: this.abortController?.signal
       });
+      const durationMs = Date.now() - startedAt;
       output = result.outputText ?? "";
+      this.options.logger?.info("provider sendMessage complete", {
+        agentId: this.options.agentId,
+        threadId,
+        loop: i + 1,
+        durationMs,
+        outputLength: output.length
+      });
+      if (shouldLogOutput()) {
+        const logged = toLoggedOutput(output);
+        this.options.logger?.info("provider output", {
+          agentId: this.options.agentId,
+          threadId,
+          loop: i + 1,
+          truncated: logged.truncated,
+          output: logged.output
+        });
+      }
       if (this.options.role === "karou") {
         const toolRequest = parseToolRequest(output);
         if (toolRequest?.name === "getAshigaruStatus") {

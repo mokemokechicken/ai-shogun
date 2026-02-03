@@ -11,6 +11,7 @@ import { startMessageWatcher } from "./message/watcher.js";
 import { writeMessageFile } from "./message/writer.js";
 import { AgentManager } from "./agent/manager.js";
 import { ensureDir } from "./utils.js";
+import { createLogger, registerProcessHandlers } from "./logger.js";
 
 const toThreadInfo = (thread: { id: string; title: string; createdAt: string; updatedAt: string }): ThreadInfo => ({
   id: thread.id,
@@ -31,6 +32,8 @@ const broadcast = (wss: WebSocketServer, event: WsEvent) => {
 const main = async () => {
   const rootDir = process.cwd();
   const config = await loadConfig(rootDir);
+  const logger = createLogger(config.baseDir, "server");
+  registerProcessHandlers(logger);
 
   await ensureDir(config.baseDir);
   await ensureDir(path.join(config.baseDir, "message_to"));
@@ -38,7 +41,16 @@ const main = async () => {
 
   const stateStore = await StateStore.load(path.join(config.baseDir, "state.json"));
   const historyStore = new HistoryStore(config.historyDir);
-  const agentManager = new AgentManager(config, stateStore);
+  const agentManager = new AgentManager(config, stateStore, logger);
+
+  logger.info("server boot", {
+    rootDir,
+    baseDir: config.baseDir,
+    historyDir: config.historyDir,
+    provider: config.provider,
+    ashigaruCount: config.ashigaruCount,
+    port: config.server.port
+  });
 
   for (const thread of stateStore.listThreads()) {
     await agentManager.initThread(thread.id);
@@ -64,20 +76,33 @@ const main = async () => {
     broadcast(wss, { type: "agent_status", agents: agentManager.getStatuses() });
   });
 
-  startMessageWatcher(config.baseDir, config.historyDir, historyStore, stateStore, {
-    onMessage: async (message: ShogunMessage) => {
-      stateStore.updateThread(message.threadId, { updatedAt: new Date().toISOString() });
-      stateStore.setLastActiveThread(message.threadId);
-      await stateStore.save();
+  startMessageWatcher(
+    config.baseDir,
+    config.historyDir,
+    historyStore,
+    stateStore,
+    {
+      onMessage: async (message: ShogunMessage) => {
+        stateStore.updateThread(message.threadId, { updatedAt: new Date().toISOString() });
+        stateStore.setLastActiveThread(message.threadId);
+        await stateStore.save();
 
-      broadcast(wss, { type: "message", message });
+        broadcast(wss, { type: "message", message });
 
-      if (message.to === "king") {
-        return;
+        if (message.to === "king") {
+          return;
+        }
+        logger.info("message routed", {
+          threadId: message.threadId,
+          from: message.from,
+          to: message.to,
+          title: message.title
+        });
+        agentManager.enqueue(message.to, message);
       }
-      agentManager.enqueue(message.to, message);
-    }
-  });
+    },
+    logger
+  );
 
   app.get("/api/threads", (_req, res) => {
     const threads = stateStore.listThreads().map(toThreadInfo);
@@ -168,6 +193,7 @@ const main = async () => {
 
   server.listen(config.server.port, () => {
     console.log(`AI Shogun server listening on http://localhost:${config.server.port}`);
+    logger.info("server listening", { port: config.server.port });
   });
 };
 
