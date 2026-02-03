@@ -1,0 +1,19 @@
+{
+  "name": "ai-shogun",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm --prefix server run dev",
+    "dev:web": "npm --prefix web run dev",
+    "build": "npm --prefix shared run build && npm --prefix server run build && npm --prefix web run build",
+    "lint": "npm --prefix shared run lint && npm --prefix server run lint && npm --prefix web run lint",
+    "test": "npm --prefix shared run test && npm --prefix server run test && npm --prefix web run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.19.0",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
+    "eslint": "^9.19.0",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "ashigaruCount": 5,
+  "provider": "codex",
+  "models": {
+    "default": "gpt-5.2",
+    "shogun": "gpt-5.2",
+    "karou": "gpt-5.2",
+    "ashigaru": "gpt-5.2"
+  },
+  "codex": {
+    "config": {
+      "approval_policy": "never"
+    }
+  },
+  "server": {
+    "port": 5178
+  }
+}
