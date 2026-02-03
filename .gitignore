@@ -10,3 +10,4 @@ pnpm-debug.log*
 .env
 .env.*
 .vscode/
+test-results/
