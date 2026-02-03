@@ -11,3 +11,4 @@ pnpm-debug.log*
 .env.*
 .vscode/
 test-results/
+.codex/environments/
