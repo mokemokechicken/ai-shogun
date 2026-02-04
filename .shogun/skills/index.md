@@ -1,4 +1,4 @@
 # Skills Index
 
-- List local skills here and link to skill files in this folder.
-- Keep this index updated so karou/ashigaru always know available skills.
+- `ai-shogun-dev-server-restart`: .shogun/skills/ai-shogun-dev-server-restart/SKILL.md
+- `ai-shogun-restart-watcher`: .shogun/skills/ai-shogun-restart-watcher/SKILL.md
