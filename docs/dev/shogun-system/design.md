@@ -72,7 +72,7 @@ interface LlmProvider {
 - 履歴の保存先 `.shogun/history/` を共有に追記
 
 ## 設定
-- `config/shogun.config.json` を読み込み (存在しない場合は環境変数/デフォルト)
+- `.shogun/config/shogun.config.json` を読み込み (存在しない場合は環境変数/デフォルト)
 - role 別に model/provider を指定可能
 
 ## テスト方針 (案)

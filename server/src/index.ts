@@ -55,6 +55,7 @@ const main = async () => {
   registerProcessHandlers(logger);
 
   await ensureDir(config.baseDir);
+  await ensureDir(path.join(config.baseDir, "config"));
   const shogunGitignorePath = path.join(config.baseDir, ".gitignore");
   try {
     await fs.access(shogunGitignorePath);

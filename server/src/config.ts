@@ -73,7 +73,7 @@ const parseEnvNumber = (value: string | undefined, fallback: number) => {
 const envString = (value: string | undefined, fallback: string) => value ?? fallback;
 
 export const loadConfig = async (rootDir: string): Promise<AppConfig> => {
-  const configPath = path.join(rootDir, "config", "shogun.config.json");
+  const configPath = path.join(rootDir, ".shogun", "config", "shogun.config.json");
   let fileConfig: RawConfig = {};
   try {
     const raw = await fs.readFile(configPath, "utf-8");
