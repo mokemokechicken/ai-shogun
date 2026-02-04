@@ -89,6 +89,7 @@ export class CodexProvider implements LlmProvider {
   private model: string;
   private modelReasoningEffort?: ModelReasoningEffort;
   private webSearchEnabled?: boolean;
+  private additionalDirectories?: string[];
 
   constructor(options: {
     model: string;
@@ -96,10 +97,12 @@ export class CodexProvider implements LlmProvider {
     env: Record<string, string>;
     modelReasoningEffort?: ModelReasoningEffort;
     webSearchEnabled?: boolean;
+    additionalDirectories?: string[];
   }) {
     this.model = options.model;
     this.modelReasoningEffort = options.modelReasoningEffort;
     this.webSearchEnabled = options.webSearchEnabled;
+    this.additionalDirectories = options.additionalDirectories;
     const env = Object.keys(options.env).length > 0 ? options.env : undefined;
     this.codex = new Codex({ config: options.config as CodexOptions["config"], env });
   }
@@ -113,7 +116,8 @@ export class CodexProvider implements LlmProvider {
       workingDirectory: options.workingDirectory,
       model: this.model,
       modelReasoningEffort: reasoningEffort,
-      webSearchEnabled: this.webSearchEnabled
+      webSearchEnabled: this.webSearchEnabled,
+      additionalDirectories: this.additionalDirectories
     });
     if (options.initialInput) {
       await thread.run(options.initialInput);
@@ -131,7 +135,8 @@ export class CodexProvider implements LlmProvider {
       const thread = this.codex.resumeThread(threadId, {
         model: this.model,
         modelReasoningEffort: this.modelReasoningEffort,
-        webSearchEnabled: this.webSearchEnabled
+        webSearchEnabled: this.webSearchEnabled,
+        additionalDirectories: this.additionalDirectories
       });
       this.threads.set(threadId, thread as CodexThread);
     }

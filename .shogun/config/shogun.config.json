@@ -6,6 +6,7 @@
     "ashigaru": "gpt-5.2-codex"
   },
   "codex": {
+    "additionalDirectories": [".git"],
     "reasoningEffort": {
       "shogun": "medium",
       "karou": "high",

@@ -20,7 +20,8 @@ const rawConfigSchema = z.object({
     .object({
       config: z.record(z.string(), z.unknown()).optional(),
       env: z.record(z.string(), z.string()).optional(),
-      reasoningEffort: z.record(z.string(), z.string()).optional()
+      reasoningEffort: z.record(z.string(), z.string()).optional(),
+      additionalDirectories: z.array(z.string()).optional()
     })
     .optional(),
   ashigaruProfiles: z
@@ -57,6 +58,7 @@ export interface AppConfig {
     config: Record<string, unknown>;
     env: Record<string, string>;
     reasoningEffort: Record<string, string>;
+    additionalDirectories: string[];
   };
   ashigaruProfiles: Record<string, { name: string; profile: string }>;
   server: {
@@ -94,6 +96,10 @@ export const loadConfig = async (rootDir: string): Promise<AppConfig> => {
     fileConfig.models?.default ?? process.env.SHOGUN_MODEL_DEFAULT ?? process.env.CODEX_MODEL,
     "gpt-5.2-codex"
   );
+  const additionalDirectories = (fileConfig.codex?.additionalDirectories ?? [])
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => path.resolve(rootDir, entry));
 
   return {
     rootDir,
@@ -117,7 +123,8 @@ export const loadConfig = async (rootDir: string): Promise<AppConfig> => {
       },
       reasoningEffort: {
         ...(fileConfig.codex?.reasoningEffort ?? {})
-      }
+      },
+      additionalDirectories
     },
     ashigaruProfiles: {
       ...(fileConfig.ashigaruProfiles ?? {})

@@ -87,7 +87,8 @@ export class AgentManager {
         model,
         config: this.config.codex.config,
         env: this.config.codex.env,
-        modelReasoningEffort: effort.value
+        modelReasoningEffort: effort.value,
+        additionalDirectories: this.config.codex.additionalDirectories
       });
     }
     throw new Error(`Unsupported provider: ${this.config.provider}`);
