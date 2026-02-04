@@ -9,6 +9,7 @@ import { loadConfig } from "./config.js";
 import { StateStore } from "./state/store.js";
 import { HistoryStore } from "./history/store.js";
 import { startMessageWatcher } from "./message/watcher.js";
+import { RESTART_EXIT_CODE, startRestartWatcher } from "./restart/watcher.js";
 import { writeMessageFile } from "./message/writer.js";
 import { AgentManager } from "./agent/manager.js";
 import { ensureDir } from "./utils.js";
@@ -151,7 +152,7 @@ const main = async () => {
     broadcast(wss, { type: "agent_status", agents: agentManager.getStatuses() });
   });
 
-  await startMessageWatcher(
+  const messageWatcher = await startMessageWatcher(
     config.baseDir,
     config.historyDir,
     historyStore,
@@ -175,6 +176,23 @@ const main = async () => {
         });
         await agentManager.enqueue(message.to, message);
       }
+    },
+    logger
+  );
+
+  let restarting = false;
+  const restartWatcher = await startRestartWatcher(
+    config.baseDir,
+    async (request) => {
+      if (restarting) return;
+      restarting = true;
+      logger.warn("restart requested", { id: request.id, requestedAt: request.requestedAt, reason: request.reason });
+      agentManager.stopAll();
+      await Promise.allSettled([messageWatcher.close(), restartWatcher.close()]);
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      // Allow restart watcher to finalize history/ledger updates before exit.
+      setTimeout(() => process.exit(RESTART_EXIT_CODE), 0);
     },
     logger
   );

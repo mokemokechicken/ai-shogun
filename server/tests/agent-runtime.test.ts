@@ -27,7 +27,7 @@ class FakeProvider implements LlmProvider {
       return { outputText: "ACK" };
     }
     if (input.input.includes("TOOL_RESULT sendMessage")) {
-      return { outputText: "DONE" };
+      return { outputText: "" };
     }
     return {
       outputText: `TOOL:sendMessage to=karou title=report body="done"`
@@ -61,7 +61,7 @@ class WaitProvider implements LlmProvider {
       return { outputText: "ACK" };
     }
     if (input.input.includes("TOOL_RESULT sendMessage")) {
-      return { outputText: "DONE" };
+      return { outputText: "" };
     }
     this.callCount += 1;
     if (this.callCount === 1) {
@@ -101,7 +101,7 @@ class ShogunWaitProvider implements LlmProvider {
       return { outputText: "ACK" };
     }
     if (input.input.includes("TOOL_RESULT sendMessage")) {
-      return { outputText: "DONE" };
+      return { outputText: "" };
     }
     this.callCount += 1;
     if (this.callCount === 1) {
@@ -234,6 +234,25 @@ const waitForFile = async (dirPath: string, timeoutMs = 1500) => {
   throw new Error("timeout");
 };
 
+const waitForEntry = async (
+  dirPath: string,
+  matcher: (entry: string) => boolean,
+  timeoutMs = 1500
+) => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const entries = await fs.readdir(dirPath);
+      const match = entries.find(matcher);
+      if (match) return match;
+    } catch {
+      // ignore
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("timeout");
+};
+
 const waitForPath = async (filePath: string, timeoutMs = 1500) => {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -330,11 +349,8 @@ describe("agent runtime", () => {
     });
 
     const outDir = path.join(tempDir, "message_to", "shogun", "from", "karou");
-    await waitForFile(outDir);
-    const entries = await fs.readdir(outDir);
-    const fileName = entries.find((entry) => entry.endsWith(".md"));
-    expect(fileName).toBeDefined();
-    const content = await fs.readFile(path.join(outDir, fileName!), "utf-8");
+    const fileName = await waitForEntry(outDir, (entry) => entry.includes("__waited"));
+    const content = await fs.readFile(path.join(outDir, fileName), "utf-8");
     const payload = JSON.parse(content) as { status: string; message: { from: string; threadId: string } };
     expect(payload.status).toBe("message");
     expect(payload.message.from).toBe("ashigaru1");
@@ -385,11 +401,8 @@ describe("agent runtime", () => {
     });
 
     const outDir = path.join(tempDir, "message_to", "king", "from", "shogun");
-    await waitForFile(outDir);
-    const entries = await fs.readdir(outDir);
-    const fileName = entries.find((entry) => entry.endsWith(".md"));
-    expect(fileName).toBeDefined();
-    const content = await fs.readFile(path.join(outDir, fileName!), "utf-8");
+    const fileName = await waitForEntry(outDir, (entry) => entry.includes("__waited"));
+    const content = await fs.readFile(path.join(outDir, fileName), "utf-8");
     const payload = JSON.parse(content) as { status: string; message: { from: string; threadId: string } };
     expect(payload.status).toBe("message");
     expect(payload.message.from).toBe("king");
