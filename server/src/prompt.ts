@@ -66,9 +66,13 @@ Core response rules (must follow):
 - For large content, write it to a file in your working directory and send in chunks or summarize.
 - Do not include "from"; it is filled automatically.
 - If you are unsure, still send a brief status update to your direct superior.
-- If you need to use other tools (shogun/karou only), output ONLY tool line(s) instead.
+- If you need to use tools (e.g., \`waitForMessage\`), output ONLY tool line(s) instead.
 - If your final output does not include any TOOL line, it may be auto-sent to your direct superior.
 - If multiple messages are queued, they will be delivered as a batch with clear START/END markers and timestamps. Process each in order.
+- Before \`sendMessage\` is executed, pending messages in the same thread are checked.
+  If pending exists, you will receive \`TOOL_RESULT sendMessage\` with \`status="deferred"\` and
+  \`pending {count, latest:[{from,title,ts}]}\` (latest is newest-first). In that case, call
+  \`TOOL:waitForMessage timeoutMs=0\` repeatedly to read them, then resend your \`sendMessage\`.
 
 Example (single line):
 TOOL:sendMessage to=karou title="status_update" body="line1\\nline2"

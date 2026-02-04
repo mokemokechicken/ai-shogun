@@ -379,6 +379,22 @@ export class AgentRuntime {
     return message ?? null;
   }
 
+  private peekQueuedMessages(threadId: string, limit = 5) {
+    const queued = this.queue.filter((entry) => entry.threadId === threadId);
+    if (queued.length === 0) {
+      return { count: 0, latest: [] as Array<{ from: AgentId; title: string; ts: string }> };
+    }
+    const latest = queued
+      .slice(-limit)
+      .reverse()
+      .map((message) => ({
+        from: message.from,
+        title: message.title,
+        ts: message.createdAt
+      }));
+    return { count: queued.length, latest };
+  }
+
   private drainQueuedMessages(threadId: string) {
     if (this.queue.length === 0) return [] as ShogunMessage[];
     const drained: ShogunMessage[] = [];
@@ -643,14 +659,6 @@ export class AgentRuntime {
             continue;
           }
           if (toolRequest.name === "waitForMessage") {
-            if (this.options.role !== "karou" && this.options.role !== "shogun") {
-              this.options.logger?.warn("tool ignored: waitForMessage not allowed", {
-                agentId: this.options.agentId,
-                threadId
-              });
-              results.push({ tool: "waitForMessage", status: "ignored" });
-              continue;
-            }
             const waitStartedAt = Date.now();
             const stopWaitHeartbeat = this.startActivityHeartbeat("メッセージ待機中", waitStartedAt);
             const waited = await this.waitForMessage(primary.threadId, toolRequest.timeoutMs);
@@ -706,6 +714,19 @@ export class AgentRuntime {
             const allowed = recipients.filter((entry) => this.options.allowedRecipients.has(entry));
             if (allowed.length === 0) {
               results.push({ tool: "sendMessage", status: "denied", to: denied, title });
+              continue;
+            }
+            const pending = this.peekQueuedMessages(primary.threadId, 5);
+            if (pending.count > 0) {
+              this.setActivity(`送信保留 (未処理${pending.count}件)`);
+              results.push({
+                tool: "sendMessage",
+                status: "deferred",
+                to: allowed,
+                denied,
+                title,
+                pending
+              });
               continue;
             }
             const resolvedBody = await this.resolveSendMessageBody(toolRequest.body, toolRequest.bodyFile);
