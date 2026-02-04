@@ -58,7 +58,7 @@ interface LlmProvider {
 ## 通信
 - WebUI ↔ server: REST + WebSocket
 - WebUI からの指示は shogun へのメッセージとして扱う
-- Agent からの送信は LLM 出力内の `send_message` ブロックを検出し、server が md を作成
+- Agent からの送信は LLM 出力内の `TOOL:sendMessage` 行を検出し、server が md を作成
 - 配送経路は「md 作成 → 監視 → 配送」に一本化し、直接配送はしない
 - LLM への入力は `FROM/DATE/本文` 形式で渡し、UI ではメタ情報として表示
 

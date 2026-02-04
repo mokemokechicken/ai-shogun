@@ -1,14 +1,17 @@
 import type { AgentId, AgentSnapshot, ShogunMessage } from "@ai-shogun/shared";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { buildSystemPrompt } from "../prompt.js";
 import { writeMessageFile } from "../message/writer.js";
 import type { StateStore } from "../state/store.js";
 import type { LlmProvider, ProviderProgressUpdate, ProviderResponse } from "../provider/types.js";
 import type { Logger } from "../logger.js";
 
-const sendMessageRegex = /```send_message\s*([\s\S]*?)```/g;
 const waitForMessageRegex = /^TOOL:waitForMessage(?:\s+timeoutMs=(\d+))?\s*$/;
 const interruptAgentRegex = /^TOOL:interruptAgent(?:\s+(.*))?\s*$/;
+const sendMessageToolRegex = /^TOOL:sendMessage(?:\s+(.*))?\s*$/;
 const toolArgRegex = /(\w+)=(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^\s]+))/g;
+const maxToolBodyBytes = 10 * 1024;
 
 const unescapeToolValue = (value: string) => {
   return value
@@ -38,65 +41,38 @@ const isDirectSubordinate = (role: AgentRuntimeOptions["role"], target: AgentId)
   if (role === "karou") return target.startsWith("ashigaru");
   return false;
 };
+
+const parseRecipients = (value: string): AgentId[] => {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean) as AgentId[];
+};
+
+const resolveBodyFilePath = (
+  baseDir: string,
+  workingDirectory: string,
+  agentId: AgentId,
+  bodyFile: string
+) => {
+  const allowedRoot = path.resolve(baseDir, "tmp", agentId);
+  const normalizedRoot = allowedRoot.endsWith(path.sep) ? allowedRoot : `${allowedRoot}${path.sep}`;
+  const candidates = bodyFile
+    ? [
+        path.isAbsolute(bodyFile) ? path.resolve(bodyFile) : path.resolve(workingDirectory, bodyFile),
+        path.isAbsolute(bodyFile) ? path.resolve(bodyFile) : path.resolve(baseDir, bodyFile)
+      ]
+    : [];
+  for (const resolved of candidates) {
+    if (resolved.startsWith(normalizedRoot)) {
+      return { path: resolved };
+    }
+  }
+  return { error: `bodyFile must be under ${allowedRoot}` };
+};
 const defaultWaitTimeoutMs = 60_000;
 const maxLoggedOutputChars = 4000;
 const activityLogLimit = 40;
-const maxLoggedSendMessageChars = 800;
-
-const parseSendMessageBlock = (raw: string) => {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-
-  const lines = trimmed.split(/\r?\n/);
-  let to: string | undefined;
-  let title: string | undefined;
-  let body: string | undefined;
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (!line.trim()) continue;
-    const match = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(.*)$/);
-    if (!match) continue;
-    const key = match[1];
-    const value = match[2] ?? "";
-    if (key === "to") {
-      to = value.trim();
-      continue;
-    }
-    if (key === "title") {
-      title = value.trim();
-      continue;
-    }
-    if (key === "body") {
-      const marker = value.trim();
-      if (marker && !marker.startsWith("|")) {
-        body = value;
-      } else {
-        const rest = lines.slice(i + 1);
-        let indent = "";
-        for (const restLine of rest) {
-          if (!restLine.trim()) continue;
-          const indentMatch = restLine.match(/^[ \t]+/);
-          indent = indentMatch ? indentMatch[0] : "";
-          break;
-        }
-        if (indent) {
-          body = rest
-            .map((restLine) => (restLine.startsWith(indent) ? restLine.slice(indent.length) : restLine))
-            .join("\n");
-        } else {
-          body = rest.join("\n");
-        }
-      }
-      break;
-    }
-  }
-
-  if (to && title && typeof body === "string") {
-    return { to, title, body };
-  }
-  return null;
-};
 
 const getAutoReplyRecipient = (role: AgentRuntimeOptions["role"]) => {
   if (role === "shogun") return "king";
@@ -110,36 +86,11 @@ const isToolOutput = (output: string) => {
     .some((line) => line.trim().startsWith("TOOL:"));
 };
 
-const parseSendMessages = (
-  output: string,
-  logger?: Logger,
-  meta?: { agentId?: AgentId; threadId?: string }
-) => {
-  const messages: Array<{ to: string; title: string; body: string }> = [];
-  let match: RegExpExecArray | null;
-  sendMessageRegex.lastIndex = 0;
-  while ((match = sendMessageRegex.exec(output))) {
-    const block = match[1];
-    const parsed = parseSendMessageBlock(block);
-    if (parsed) {
-      messages.push(parsed);
-    } else {
-      const preview =
-        block.length <= maxLoggedSendMessageChars ? block : block.slice(0, maxLoggedSendMessageChars);
-      logger?.warn("send_message parse failed", {
-        ...meta,
-        truncated: block.length > maxLoggedSendMessageChars,
-        output: preview
-      });
-    }
-  }
-  return messages;
-};
-
 type ToolRequest =
   | { name: "getAshigaruStatus" }
   | { name: "waitForMessage"; timeoutMs?: number }
-  | { name: "interruptAgent"; to: AgentId; title?: string; body?: string };
+  | { name: "interruptAgent"; to: AgentId[]; title?: string; body?: string }
+  | { name: "sendMessage"; to: AgentId[]; title?: string; body?: string; bodyFile?: string };
 
 const parseToolRequests = (output: string): ToolRequest[] => {
   const requests: ToolRequest[] = [];
@@ -153,11 +104,13 @@ const parseToolRequests = (output: string): ToolRequest[] => {
     const interruptMatch = trimmed.match(interruptAgentRegex);
     if (interruptMatch) {
       const args = parseToolArgs(interruptMatch[1]);
-      const to = args.to?.trim();
-      if (to) {
+      const toRaw = args.to?.trim();
+      if (toRaw) {
+        const to = parseRecipients(toRaw);
+        if (to.length === 0) continue;
         requests.push({
           name: "interruptAgent",
-          to: to as AgentId,
+          to,
           title: args.title,
           body: args.body
         });
@@ -172,6 +125,24 @@ const parseToolRequests = (output: string): ToolRequest[] => {
       } else {
         requests.push({ name: "waitForMessage" });
       }
+      continue;
+    }
+    const sendMatch = trimmed.match(sendMessageToolRegex);
+    if (sendMatch) {
+      const args = parseToolArgs(sendMatch[1]);
+      const toRaw = args.to?.trim();
+      if (!toRaw) {
+        continue;
+      }
+      const to = parseRecipients(toRaw);
+      if (to.length === 0) continue;
+      requests.push({
+        name: "sendMessage",
+        to,
+        title: args.title,
+        body: args.body,
+        bodyFile: args.bodyFile
+      });
       continue;
     }
   }
@@ -304,6 +275,41 @@ export class AgentRuntime {
       return;
     }
     this.recordActivity(update.label, update.detail);
+  }
+
+  private async resolveSendMessageBody(body?: string, bodyFile?: string) {
+    const inline = body ?? "";
+    if (inline.trim()) {
+      return { body: inline, source: "inline" as const };
+    }
+    if (!bodyFile) {
+      return { error: "body or bodyFile is required" };
+    }
+    const resolved = resolveBodyFilePath(
+      this.options.baseDir,
+      this.options.workingDirectory,
+      this.options.agentId,
+      bodyFile
+    );
+    if ("error" in resolved) {
+      return { error: resolved.error };
+    }
+    try {
+      const stat = await fs.stat(resolved.path);
+      if (!stat.isFile()) {
+        return { error: "bodyFile is not a file" };
+      }
+      if (stat.size > maxToolBodyBytes) {
+        return { error: `bodyFile exceeds ${maxToolBodyBytes} bytes` };
+      }
+      const raw = await fs.readFile(resolved.path, "utf-8");
+      return { body: raw, source: "file" as const, bodyFile: resolved.path };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+        return { error: "bodyFile not found" };
+      }
+      return { error: "bodyFile read failed" };
+    }
   }
 
   private clearActivityTimer() {
@@ -452,48 +458,32 @@ export class AgentRuntime {
       });
       const sessionThreadId = await this.ensureSession(message.threadId);
       this.abortController = new AbortController();
-      const output = await this.runWithTools(sessionThreadId, message);
-      const outbound = parseSendMessages(output, this.options.logger, {
-        agentId: this.options.agentId,
-        threadId: message.threadId
-      });
-      if (outbound.length === 0) {
-        const fallbackBody = output.trim();
-        if (fallbackBody && !isToolOutput(fallbackBody)) {
-          const to = getAutoReplyRecipient(this.options.role);
-          if (this.options.allowedRecipients.has(to)) {
-            outbound.push({
-              to,
-              title: `auto_reply: ${message.title}`,
-              body: fallbackBody
-            });
-            this.options.logger?.warn("auto_reply used", {
-              agentId: this.options.agentId,
-              threadId: message.threadId,
-              to,
-              title: message.title
-            });
-          } else {
-            this.options.logger?.warn("auto_reply skipped: recipient not allowed", {
-              agentId: this.options.agentId,
-              threadId: message.threadId,
-              to
-            });
-          }
+      const { output, usedTool } = await this.runWithTools(sessionThreadId, message);
+      const fallbackBody = output.trim();
+      if (!usedTool && fallbackBody && !isToolOutput(fallbackBody)) {
+        const to = getAutoReplyRecipient(this.options.role);
+        if (this.options.allowedRecipients.has(to)) {
+          await writeMessageFile({
+            baseDir: this.options.baseDir,
+            threadId: message.threadId,
+            from: this.options.agentId,
+            to,
+            title: `auto_reply: ${message.title}`,
+            body: fallbackBody
+          });
+          this.options.logger?.warn("auto_reply used", {
+            agentId: this.options.agentId,
+            threadId: message.threadId,
+            to,
+            title: message.title
+          });
+        } else {
+          this.options.logger?.warn("auto_reply skipped: recipient not allowed", {
+            agentId: this.options.agentId,
+            threadId: message.threadId,
+            to
+          });
         }
-      }
-      for (const entry of outbound) {
-        if (!this.options.allowedRecipients.has(entry.to)) {
-          continue;
-        }
-        await writeMessageFile({
-          baseDir: this.options.baseDir,
-          threadId: message.threadId,
-          from: this.options.agentId,
-          to: entry.to,
-          title: entry.title,
-          body: entry.body
-        });
       }
     } catch (error) {
       this.options.logger?.error("agent message processing failed", {
@@ -523,6 +513,7 @@ export class AgentRuntime {
   private async runWithTools(threadId: string, message: ShogunMessage) {
     let input = `FROM: ${message.from}\nDATE: ${message.createdAt}\nTITLE: ${message.title}\n\n${message.body}`;
     let output = "";
+    let usedTool = false;
     const maxLoops = 3;
     for (let i = 0; i < maxLoops; i += 1) {
       if (this.stopRequested) break;
@@ -577,6 +568,7 @@ export class AgentRuntime {
       }
       const toolRequests = parseToolRequests(output);
       if (toolRequests.length > 0) {
+        usedTool = true;
         const results: Array<Record<string, unknown>> = [];
         let waitEncountered = false;
         for (const toolRequest of toolRequests) {
@@ -628,35 +620,80 @@ export class AgentRuntime {
             continue;
           }
           if (toolRequest.name === "interruptAgent") {
-            const target = toolRequest.to;
-            if (!isDirectSubordinate(this.options.role, target)) {
-              this.options.logger?.warn("tool ignored: interruptAgent not allowed", {
-                agentId: this.options.agentId,
-                threadId,
-                target
-              });
-              results.push({ tool: "interruptAgent", status: "ignored", to: target });
-              continue;
-            }
             const rawBody = toolRequest.body ?? "";
             const body = rawBody.trim();
             const title = toolRequest.title?.trim() || `interrupt: ${message.title}`;
             const hasBody = body.length > 0;
-            this.options.interruptAgent?.(target, hasBody ? "interrupt" : "stop");
-            if (hasBody) {
+            const recipients = Array.from(new Set(toolRequest.to));
+            const allowed = recipients.filter(
+              (target) => this.options.allowedRecipients.has(target) && isDirectSubordinate(this.options.role, target)
+            );
+            const denied = recipients.filter((target) => !allowed.includes(target));
+            if (allowed.length === 0) {
+              results.push({ tool: "interruptAgent", status: "denied", to: denied, title });
+              continue;
+            }
+            for (const target of allowed) {
+              this.options.interruptAgent?.(target, hasBody ? "interrupt" : "stop");
+              if (hasBody) {
+                await writeMessageFile({
+                  baseDir: this.options.baseDir,
+                  threadId: message.threadId,
+                  from: this.options.agentId,
+                  to: target,
+                  title,
+                  body
+                });
+              }
+            }
+            this.setActivity(hasBody ? "割り込み指示送信" : "停止指示送信");
+            results.push({
+              tool: "interruptAgent",
+              status: hasBody ? "interrupted" : "stopped",
+              to: allowed,
+              denied
+            });
+          }
+          if (toolRequest.name === "sendMessage") {
+            const title = toolRequest.title?.trim() || message.title;
+            const recipients = Array.from(new Set(toolRequest.to));
+            const denied = recipients.filter((entry) => !this.options.allowedRecipients.has(entry));
+            const allowed = recipients.filter((entry) => this.options.allowedRecipients.has(entry));
+            if (allowed.length === 0) {
+              results.push({ tool: "sendMessage", status: "denied", to: denied, title });
+              continue;
+            }
+            const resolvedBody = await this.resolveSendMessageBody(toolRequest.body, toolRequest.bodyFile);
+            if ("error" in resolvedBody) {
+              results.push({
+                tool: "sendMessage",
+                status: "error",
+                error: resolvedBody.error,
+                to: allowed,
+                title
+              });
+              continue;
+            }
+            for (const to of allowed) {
               await writeMessageFile({
                 baseDir: this.options.baseDir,
                 threadId: message.threadId,
                 from: this.options.agentId,
-                to: target,
+                to,
                 title,
-                body
+                body: resolvedBody.body
               });
-              this.setActivity("割り込み指示送信");
-            } else {
-              this.setActivity("停止指示送信");
             }
-            results.push({ tool: "interruptAgent", status: hasBody ? "interrupted" : "stopped", to: target });
+            this.setActivity("メッセージ送信");
+            results.push({
+              tool: "sendMessage",
+              status: "sent",
+              to: allowed,
+              denied,
+              title,
+              bodySource: resolvedBody.source,
+              bodyFile: resolvedBody.source === "file" ? resolvedBody.bodyFile : undefined
+            });
           }
         }
 
@@ -680,8 +717,13 @@ export class AgentRuntime {
           if (single?.name === "interruptAgent" && singleResult) {
             input = `TOOL_RESULT interruptAgent: ${JSON.stringify({
               status: singleResult.status,
-              to: singleResult.to
+              to: singleResult.to,
+              denied: singleResult.denied
             })}`;
+            continue;
+          }
+          if (single?.name === "sendMessage" && singleResult) {
+            input = `TOOL_RESULT sendMessage: ${JSON.stringify(singleResult)}`;
             continue;
           }
         }
@@ -692,6 +734,6 @@ export class AgentRuntime {
       }
       break;
     }
-    return output;
+    return { output, usedTool };
   }
 }

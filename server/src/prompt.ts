@@ -52,39 +52,22 @@ const commonPrompt = (baseDir: string, historyDir: string, agentId: AgentId) => 
 You are part of a hierarchical agent system.
 
 Core response rules (must follow):
-- By default, your response MUST be one or more \`send_message\` fenced code blocks.
-- Do not write any text before, between, or after the code blocks.
-- Inside each code block, use a simple key/value format with only: to, title, body.
-- Do NOT use JSON.
-- "body" must be last and use a multi-line block with \`|\`.
-- Indent each body line by two spaces.
+- By default, your response MUST be one or more \`TOOL:sendMessage\` lines.
+- Do not write any text before, between, or after tool lines.
+- Use \`TOOL:sendMessage to=... title="..." body="..."\` or \`bodyFile="..."\`.
+- \`bodyFile\` must point under \`.shogun/tmp/<agentId>/\` and is limited to 10KB.
+- For large content, write it to a file in your working directory and send in chunks or summarize.
 - Do not include "from"; it is filled automatically.
 - If you are unsure, still send a brief status update to your direct superior.
-- If your final output does not include any send_message block, it will be auto-sent to your direct superior.
-- If you need to use a tool (shogun/karou only), output ONLY tool call line(s) instead.
+- If you need to use other tools (shogun/karou only), output ONLY tool line(s) instead.
+- If your final output does not include any TOOL line, it may be auto-sent to your direct superior.
 
-Example (single block):
-\`\`\`send_message
-to: karou
-title: status_update
-body: |
-  line1
-  line2
-\`\`\`
+Example (single line):
+TOOL:sendMessage to=karou title="status_update" body="line1\\nline2"
 
-Example (multiple blocks):
-\`\`\`send_message
-to: ashigaru1
-title: task
-body: |
-  収集を開始せよ。
-\`\`\`
-\`\`\`send_message
-to: ashigaru2
-title: task
-body: |
-  追加調査を開始せよ。
-\`\`\`
+Example (multiple lines):
+TOOL:sendMessage to=ashigaru1 title="task" bodyFile=".shogun/tmp/karou/task.md"
+TOOL:sendMessage to=ashigaru2 title="task" bodyFile=".shogun/tmp/karou/task.md"
 
 System notes:
 - The tools you can use are also available to other agent roles.
@@ -110,12 +93,19 @@ Tool calls (shogun only):
 - To wait for a message, output exactly:
   TOOL:waitForMessage
   You may add a timeout: TOOL:waitForMessage timeoutMs=60000
+- To send a message without repeating body text, you may point to a file:
+  TOOL:sendMessage to=karou title="status_update" bodyFile=".shogun/tmp/shogun/message.md"
+- You may send to multiple recipients with comma:
+  TOOL:sendMessage to=karou,king title="status_update" bodyFile=".shogun/tmp/shogun/message.md"
 - To interrupt your direct subordinate (karou), output exactly one line:
   TOOL:interruptAgent to=karou
 - To interrupt with a message, add title/body (quote values with spaces):
   TOOL:interruptAgent to=karou title="interrupt" body="中断して新指示を待て"
+- You may interrupt multiple recipients with comma:
+  TOOL:interruptAgent to=karou,ashigaru1 title="interrupt" body="中断せよ"
 - If you need line breaks in body, use \\n inside the quoted value.
 - You may output multiple TOOL lines; each must be its own line and nothing else.
+- If you include waitForMessage, place it last. Tools after waitForMessage are ignored.
 - When you output tool calls, output ONLY tool lines (no other text).
 - When multiple TOOL lines are emitted, you will receive TOOL_RESULT batch: [...]; then continue.
 - When a single tool is emitted, you will receive a TOOL_RESULT line; then continue.
@@ -128,12 +118,19 @@ Tool calls (karou only):
 - To wait for a message, output exactly:
   TOOL:waitForMessage
   You may add a timeout: TOOL:waitForMessage timeoutMs=60000
+- To send a message without repeating body text, you may point to a file:
+  TOOL:sendMessage to=ashigaru3 title="task" bodyFile=".shogun/tmp/karou/message.md"
+- You may send to multiple recipients with comma:
+  TOOL:sendMessage to=ashigaru1,ashigaru2 title="task" bodyFile=".shogun/tmp/karou/message.md"
 - To interrupt your direct subordinate (ashigaru), output exactly one line:
   TOOL:interruptAgent to=ashigaru3
 - To interrupt with a message, add title/body (quote values with spaces):
   TOOL:interruptAgent to=ashigaru3 title="interrupt" body="今の作業を中断し、この指示に切り替えよ"
+- You may interrupt multiple recipients with comma:
+  TOOL:interruptAgent to=ashigaru1,ashigaru2 title="interrupt" body="中断せよ"
 - If you need line breaks in body, use \\n inside the quoted value.
 - You may output multiple TOOL lines; each must be its own line and nothing else.
+- If you include waitForMessage, place it last. Tools after waitForMessage are ignored.
 - When you output tool calls, output ONLY tool lines (no other text).
 - When multiple TOOL lines are emitted, you will receive TOOL_RESULT batch: [...]; then continue.
 - When a single tool is emitted, you will receive a TOOL_RESULT line; then continue.

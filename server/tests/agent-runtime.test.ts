@@ -26,8 +26,11 @@ class FakeProvider implements LlmProvider {
     if (input.input.includes("ACK")) {
       return { outputText: "ACK" };
     }
+    if (input.input.includes("TOOL_RESULT sendMessage")) {
+      return { outputText: "DONE" };
+    }
     return {
-      outputText: `\n\n\`\`\`send_message\nto: karou\ntitle: report\nbody: |\n  done\n\`\`\``
+      outputText: `TOOL:sendMessage to=karou title=report body="done"`
     };
   }
 
@@ -57,6 +60,9 @@ class WaitProvider implements LlmProvider {
     if (input.input.includes("ACK")) {
       return { outputText: "ACK" };
     }
+    if (input.input.includes("TOOL_RESULT sendMessage")) {
+      return { outputText: "DONE" };
+    }
     this.callCount += 1;
     if (this.callCount === 1) {
       return { outputText: "TOOL:waitForMessage timeoutMs=500" };
@@ -64,7 +70,7 @@ class WaitProvider implements LlmProvider {
     const match = input.input.match(/TOOL_RESULT waitForMessage: ([\s\S]*)/);
     const body = match ? match[1] : "missing";
     return {
-      outputText: `\n\n\`\`\`send_message\nto: shogun\ntitle: waited\nbody: |\n  ${body}\n\`\`\``
+      outputText: `TOOL:sendMessage to=shogun title=waited body='${body}'`
     };
   }
 
@@ -94,6 +100,9 @@ class ShogunWaitProvider implements LlmProvider {
     if (input.input.includes("ACK")) {
       return { outputText: "ACK" };
     }
+    if (input.input.includes("TOOL_RESULT sendMessage")) {
+      return { outputText: "DONE" };
+    }
     this.callCount += 1;
     if (this.callCount === 1) {
       return { outputText: "TOOL:waitForMessage timeoutMs=500" };
@@ -101,7 +110,7 @@ class ShogunWaitProvider implements LlmProvider {
     const match = input.input.match(/TOOL_RESULT waitForMessage: ([\s\S]*)/);
     const body = match ? match[1] : "missing";
     return {
-      outputText: `\n\n\`\`\`send_message\nto: king\ntitle: waited\nbody: |\n  ${body}\n\`\`\``
+      outputText: `TOOL:sendMessage to=king title=waited body='${body}'`
     };
   }
 
@@ -328,7 +337,7 @@ describe("agent runtime", () => {
     expect(payload.message.threadId).toBe(thread.id);
   });
 
-  it("auto-wraps plain output when send_message is missing", async () => {
+  it("auto-replies when output has no tool calls", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "shogun-agent-"));
     const stateStore = new StateStore(path.join(tempDir, "state.json"), {
       version: 1,
