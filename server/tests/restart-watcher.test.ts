@@ -32,22 +32,32 @@ describe("restart watcher", () => {
     await fs.mkdir(requestDir, { recursive: true });
 
     const received: string[] = [];
+    let completedAfterHistory = false;
+    const fileName = "restart-1.json";
+    const historyPath = path.join(restartDir, "history", fileName);
     const watcher = await startRestartWatcher(baseDir, {
       onRestart: async (request) => {
         received.push(request.reason ?? "");
+      },
+      onRestartComplete: async () => {
+        try {
+          await fs.stat(historyPath);
+          completedAfterHistory = true;
+        } catch {
+          completedAfterHistory = false;
+        }
       }
     });
 
     await new Promise<void>((resolve) => watcher.on("ready", () => resolve()));
 
-    const fileName = "restart-1.json";
     const filePath = path.join(requestDir, fileName);
     await fs.writeFile(filePath, JSON.stringify({ reason: "test" }), "utf-8");
 
     await waitFor(() => received.length > 0);
     expect(received[0]).toBe("test");
+    await waitFor(() => completedAfterHistory);
 
-    const historyPath = path.join(restartDir, "history", fileName);
     await waitFor(async () => {
       try {
         await fs.stat(historyPath);

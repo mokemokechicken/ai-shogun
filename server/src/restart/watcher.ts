@@ -17,6 +17,7 @@ export interface RestartRequest {
 
 export interface RestartWatcherHandlers {
   onRestart: (_request: RestartRequest) => Promise<void> | void;
+  onRestartComplete?: (_request: RestartRequest) => Promise<void> | void;
 }
 
 type QueueDir = "requests" | "processing";
@@ -158,7 +159,8 @@ export const startRestartWatcher = async (
 
       logger?.info("restart request detected", { id: request.id, requestedAt, reason, filePath });
 
-      if (!ledger.isAtLeast(idempotencyKey, "job_done")) {
+      const shouldRestart = !ledger.isAtLeast(idempotencyKey, "job_done");
+      if (shouldRestart) {
         await handlers.onRestart(request);
         await ledger.mark(idempotencyKey, "job_done");
       }
@@ -167,6 +169,10 @@ export const startRestartWatcher = async (
       const moved = await moveProcessingToHistory(filePath, historyPath);
       if (moved) {
         await ledger.mark(idempotencyKey, "done");
+      }
+
+      if (shouldRestart) {
+        await handlers.onRestartComplete?.(request);
       }
     } catch (error) {
       logger?.error("restart watcher add error", { error, filePath });

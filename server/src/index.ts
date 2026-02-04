@@ -183,16 +183,19 @@ const main = async () => {
   let restarting = false;
   const restartWatcher = await startRestartWatcher(
     config.baseDir,
-    async (request) => {
-      if (restarting) return;
-      restarting = true;
-      logger.warn("restart requested", { id: request.id, requestedAt: request.requestedAt, reason: request.reason });
-      agentManager.stopAll();
-      await Promise.allSettled([messageWatcher.close(), restartWatcher.close()]);
-      await new Promise<void>((resolve) => wss.close(() => resolve()));
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      // Allow restart watcher to finalize history/ledger updates before exit.
-      setTimeout(() => process.exit(RESTART_EXIT_CODE), 0);
+    {
+      onRestart: async (request) => {
+        if (restarting) return;
+        restarting = true;
+        logger.warn("restart requested", { id: request.id, requestedAt: request.requestedAt, reason: request.reason });
+        agentManager.stopAll();
+        await Promise.allSettled([messageWatcher.close(), restartWatcher.close()]);
+        await new Promise<void>((resolve) => wss.close(() => resolve()));
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      },
+      onRestartComplete: async () => {
+        process.exit(RESTART_EXIT_CODE);
+      }
     },
     logger
   );
