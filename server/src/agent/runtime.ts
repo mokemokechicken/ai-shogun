@@ -670,8 +670,9 @@ export class AgentRuntime {
     const primary = messages[0];
     let input = formatMessageBatchInput(messages);
     let output = "";
+    const waitLimit = 10;
+    let waitRemaining = waitLimit;
     let maxLoops = 3;
-    let extraWaitLoopGranted = false;
 
     const waitKey = WaitStore.buildKey(primary.threadId, this.options.agentId);
     const existingWait = await this.waitStore.load(waitKey);
@@ -791,6 +792,27 @@ export class AgentRuntime {
               results.push({ tool: "waitForMessage", status: "ignored" });
               continue;
             }
+            if (waitRemaining <= 0) {
+              const payload = {
+                status: "timeout",
+                timeoutMs: 0,
+                remainingWaits: 0,
+                limitReached: true
+              };
+              this.setActivity("待機上限到達 (残り待機0回)");
+              this.options.logger?.warn("waitForMessage limit reached", {
+                agentId: this.options.agentId,
+                threadId,
+                waitLimit
+              });
+              results.push({ tool: "waitForMessage", ...payload });
+              if (i + 1 >= maxLoops) {
+                maxLoops += 1;
+              }
+              waitEncountered = true;
+              continue;
+            }
+            waitRemaining -= 1;
             const waitStartedAt = Date.now();
             const stopWaitHeartbeat = this.startActivityHeartbeat("メッセージ待機中", waitStartedAt);
             const timeoutMs = toolRequest.timeoutMs ?? defaultWaitTimeoutMs;
@@ -834,13 +856,20 @@ export class AgentRuntime {
               });
             }
 
-            const payload = waited ? { status: "message", message: waited } : { status: "timeout", timeoutMs };
-            this.setActivity(waited ? "メッセージ受信" : "待機タイムアウト");
+            const payload = waited
+              ? { status: "message", message: waited, remainingWaits: waitRemaining }
+              : { status: "timeout", timeoutMs, remainingWaits: waitRemaining };
+            this.setActivity(
+              waited ? `メッセージ受信 (残り待機${waitRemaining}回)` : `待機タイムアウト (残り待機${waitRemaining}回)`
+            );
+            maxLoops += 1;
             results.push({ tool: "waitForMessage", ...payload });
-            if (!extraWaitLoopGranted) {
-              maxLoops += 1;
-              extraWaitLoopGranted = true;
-            }
+            this.options.logger?.info("waitForMessage remaining updated", {
+              agentId: this.options.agentId,
+              threadId,
+              remaining: waitRemaining,
+              waitLimit
+            });
             waitEncountered = true;
             continue;
           }
@@ -934,8 +963,17 @@ export class AgentRuntime {
           if (single?.name === "waitForMessage" && singleResult) {
             const payload =
               singleResult.status === "message"
-                ? { status: "message", message: singleResult.message }
-                : { status: "timeout", timeoutMs: singleResult.timeoutMs ?? defaultWaitTimeoutMs };
+                ? {
+                    status: "message",
+                    message: singleResult.message,
+                    remainingWaits: singleResult.remainingWaits
+                  }
+                : {
+                    status: "timeout",
+                    timeoutMs: singleResult.timeoutMs ?? defaultWaitTimeoutMs,
+                    remainingWaits: singleResult.remainingWaits,
+                    limitReached: singleResult.limitReached
+                  };
             input = `TOOL_RESULT waitForMessage: ${JSON.stringify(payload)}`;
             continue;
           }
