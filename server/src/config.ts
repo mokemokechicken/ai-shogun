@@ -23,6 +23,15 @@ const rawConfigSchema = z.object({
       reasoningEffort: z.record(z.string(), z.string()).optional()
     })
     .optional(),
+  ashigaruProfiles: z
+    .record(
+      z.string(),
+      z.object({
+        name: z.string(),
+        profile: z.string()
+      })
+    )
+    .optional(),
   server: z
     .object({
       port: z.number().int().positive().optional()
@@ -49,6 +58,7 @@ export interface AppConfig {
     env: Record<string, string>;
     reasoningEffort: Record<string, string>;
   };
+  ashigaruProfiles: Record<string, { name: string; profile: string }>;
   server: {
     port: number;
   };
@@ -108,6 +118,9 @@ export const loadConfig = async (rootDir: string): Promise<AppConfig> => {
       reasoningEffort: {
         ...(fileConfig.codex?.reasoningEffort ?? {})
       }
+    },
+    ashigaruProfiles: {
+      ...(fileConfig.ashigaruProfiles ?? {})
     },
     server: {
       port: fileConfig.server?.port ?? parseEnvNumber(process.env.SHOGUN_PORT, 4090)

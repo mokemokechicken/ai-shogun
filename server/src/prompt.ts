@@ -4,7 +4,7 @@ import type { AgentId } from "@ai-shogun/shared";
 
 const sharedRulesRelativePath = path.join("rules", "index.md");
 const skillsIndexRelativePath = path.join("skills", "index.md");
-const ashigaruProfiles: Record<string, { name: string; profile: string }> = {
+const defaultAshigaruProfiles: Record<string, { name: string; profile: string }> = {
   ashigaru1: { name: "迅速", profile: "素早いレスポンス重視。短い回答・軽量タスクに向く。" },
   ashigaru2: { name: "軽量調査", profile: "低い推論負荷での調査・収集に向く。" },
   ashigaru3: { name: "標準", profile: "標準バランス。一般的な調査と整理に向く。" },
@@ -14,9 +14,16 @@ const ashigaruProfiles: Record<string, { name: string; profile: string }> = {
   ashigaru7: { name: "深掘りII", profile: "高めの推論の追加担当。検証と深掘りを並列化。" }
 };
 
-const getAshigaruProfile = (agentId: AgentId) => {
+const resolveAshigaruProfiles = (profiles?: Record<string, { name: string; profile: string }>) => {
+  if (!profiles || Object.keys(profiles).length === 0) {
+    return defaultAshigaruProfiles;
+  }
+  return { ...defaultAshigaruProfiles, ...profiles };
+};
+
+const getAshigaruProfile = (agentId: AgentId, profiles: Record<string, { name: string; profile: string }>) => {
   return (
-    ashigaruProfiles[agentId] ?? {
+    profiles[agentId] ?? {
       name: "標準",
       profile: "標準バランス。"
     }
@@ -61,6 +68,7 @@ Core response rules (must follow):
 - If you are unsure, still send a brief status update to your direct superior.
 - If you need to use other tools (shogun/karou only), output ONLY tool line(s) instead.
 - If your final output does not include any TOOL line, it may be auto-sent to your direct superior.
+- If multiple messages are queued, they will be delivered as a batch with clear START/END markers and timestamps. Process each in order.
 
 Example (single line):
 TOOL:sendMessage to=karou title="status_update" body="line1\\nline2"
@@ -141,7 +149,9 @@ export const buildSystemPrompt = (params: {
   agentId: AgentId;
   baseDir: string;
   historyDir: string;
+  ashigaruProfiles?: Record<string, { name: string; profile: string }>;
 }) => {
+  const ashigaruProfiles = resolveAshigaruProfiles(params.ashigaruProfiles);
   const base = commonPrompt(params.baseDir, params.historyDir, params.agentId);
   if (params.role === "shogun") {
     return `
@@ -195,7 +205,7 @@ ${base}
   }
 
   const { skillsIndexPath, skillsIndex } = loadSkillsIndex(params.baseDir);
-  const ashigaruProfile = getAshigaruProfile(params.agentId);
+  const ashigaruProfile = getAshigaruProfile(params.agentId, ashigaruProfiles);
   return `
 You are ashigaru (${params.agentId}).
 - Follow karou's instructions and report results back to karou. The karou is your superior. You must follow their commands.

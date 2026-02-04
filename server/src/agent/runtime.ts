@@ -86,6 +86,26 @@ const isToolOutput = (output: string) => {
     .some((line) => line.trim().startsWith("TOOL:"));
 };
 
+const formatMessageBatchInput = (messages: ShogunMessage[]) => {
+  if (messages.length === 1) {
+    const message = messages[0];
+    return `FROM: ${message.from}\nDATE: ${message.createdAt}\nTITLE: ${message.title}\n\n${message.body}`;
+  }
+  const lines: string[] = [`BATCH_START count=${messages.length}`];
+  messages.forEach((message, index) => {
+    const idx = index + 1;
+    lines.push(`--- MESSAGE ${idx}/${messages.length} START ---`);
+    lines.push(`FROM: ${message.from}`);
+    lines.push(`DATE: ${message.createdAt}`);
+    lines.push(`TITLE: ${message.title}`);
+    lines.push("BODY:");
+    lines.push(message.body ?? "");
+    lines.push(`--- MESSAGE ${idx}/${messages.length} END ---`);
+  });
+  lines.push("BATCH_END");
+  return lines.join("\n");
+};
+
 type ToolRequest =
   | { name: "getAshigaruStatus" }
   | { name: "waitForMessage"; timeoutMs?: number }
@@ -163,6 +183,7 @@ export interface AgentRuntimeOptions {
   role: "shogun" | "karou" | "ashigaru";
   baseDir: string;
   historyDir: string;
+  ashigaruProfiles?: Record<string, { name: string; profile: string }>;
   allowedRecipients: Set<string>;
   stateStore: StateStore;
   provider: LlmProvider;
@@ -358,6 +379,24 @@ export class AgentRuntime {
     return message ?? null;
   }
 
+  private drainQueuedMessages(threadId: string) {
+    if (this.queue.length === 0) return [] as ShogunMessage[];
+    const drained: ShogunMessage[] = [];
+    const remaining: ShogunMessage[] = [];
+    for (const entry of this.queue) {
+      if (entry.threadId === threadId) {
+        drained.push(entry);
+      } else {
+        remaining.push(entry);
+      }
+    }
+    if (drained.length > 0) {
+      this.queue = remaining;
+      this.touchStatus();
+    }
+    return drained;
+  }
+
   private async waitForMessage(threadId: string, timeoutMs?: number) {
     const queued = this.popQueuedMessage(threadId);
     if (queued) return queued;
@@ -404,7 +443,8 @@ export class AgentRuntime {
       role: this.options.role,
       agentId: this.options.agentId,
       baseDir: this.options.baseDir,
-      historyDir: this.options.historyDir
+      historyDir: this.options.historyDir,
+      ashigaruProfiles: this.options.ashigaruProfiles
     });
     if (!session) {
       this.options.logger?.info("agent session create", {
@@ -445,22 +485,28 @@ export class AgentRuntime {
     if (!message) {
       return;
     }
+    const batch = [message, ...this.drainQueuedMessages(message.threadId)];
     this.activeThreadId = message.threadId;
     this.setBusy(true);
-    this.setActivity(`指示処理開始: ${message.title}`);
+    if (batch.length > 1) {
+      this.setActivity(`指示処理開始: ${message.title} 他${batch.length - 1}件`);
+    } else {
+      this.setActivity(`指示処理開始: ${message.title}`);
+    }
     try {
       this.options.logger?.info("agent message processing started", {
         agentId: this.options.agentId,
         threadId: message.threadId,
         from: message.from,
         to: message.to,
-        title: message.title
+        title: message.title,
+        batchSize: batch.length
       });
       const sessionThreadId = await this.ensureSession(message.threadId);
       this.abortController = new AbortController();
-      const { output, usedTool } = await this.runWithTools(sessionThreadId, message);
+      const output = await this.runWithTools(sessionThreadId, batch);
       const fallbackBody = output.trim();
-      if (!usedTool && fallbackBody && !isToolOutput(fallbackBody)) {
+      if (fallbackBody && !isToolOutput(fallbackBody)) {
         const to = getAutoReplyRecipient(this.options.role);
         if (this.options.allowedRecipients.has(to)) {
           await writeMessageFile({
@@ -468,7 +514,7 @@ export class AgentRuntime {
             threadId: message.threadId,
             from: this.options.agentId,
             to,
-            title: `auto_reply: ${message.title}`,
+            title: `auto_reply: ${message.title}${batch.length > 1 ? ` (+${batch.length - 1})` : ""}`,
             body: fallbackBody
           });
           this.options.logger?.warn("auto_reply used", {
@@ -510,10 +556,10 @@ export class AgentRuntime {
     }
   }
 
-  private async runWithTools(threadId: string, message: ShogunMessage) {
-    let input = `FROM: ${message.from}\nDATE: ${message.createdAt}\nTITLE: ${message.title}\n\n${message.body}`;
+  private async runWithTools(threadId: string, messages: ShogunMessage[]) {
+    const primary = messages[0];
+    let input = formatMessageBatchInput(messages);
     let output = "";
-    let usedTool = false;
     const maxLoops = 3;
     for (let i = 0; i < maxLoops; i += 1) {
       if (this.stopRequested) break;
@@ -568,7 +614,6 @@ export class AgentRuntime {
       }
       const toolRequests = parseToolRequests(output);
       if (toolRequests.length > 0) {
-        usedTool = true;
         const results: Array<Record<string, unknown>> = [];
         let waitEncountered = false;
         for (const toolRequest of toolRequests) {
@@ -608,7 +653,7 @@ export class AgentRuntime {
             }
             const waitStartedAt = Date.now();
             const stopWaitHeartbeat = this.startActivityHeartbeat("メッセージ待機中", waitStartedAt);
-            const waited = await this.waitForMessage(message.threadId, toolRequest.timeoutMs);
+            const waited = await this.waitForMessage(primary.threadId, toolRequest.timeoutMs);
             stopWaitHeartbeat();
             const timeoutMs = toolRequest.timeoutMs ?? defaultWaitTimeoutMs;
             const payload = waited
@@ -622,7 +667,7 @@ export class AgentRuntime {
           if (toolRequest.name === "interruptAgent") {
             const rawBody = toolRequest.body ?? "";
             const body = rawBody.trim();
-            const title = toolRequest.title?.trim() || `interrupt: ${message.title}`;
+            const title = toolRequest.title?.trim() || `interrupt: ${primary.title}`;
             const hasBody = body.length > 0;
             const recipients = Array.from(new Set(toolRequest.to));
             const allowed = recipients.filter(
@@ -638,7 +683,7 @@ export class AgentRuntime {
               if (hasBody) {
                 await writeMessageFile({
                   baseDir: this.options.baseDir,
-                  threadId: message.threadId,
+                  threadId: primary.threadId,
                   from: this.options.agentId,
                   to: target,
                   title,
@@ -655,7 +700,7 @@ export class AgentRuntime {
             });
           }
           if (toolRequest.name === "sendMessage") {
-            const title = toolRequest.title?.trim() || message.title;
+            const title = toolRequest.title?.trim() || primary.title;
             const recipients = Array.from(new Set(toolRequest.to));
             const denied = recipients.filter((entry) => !this.options.allowedRecipients.has(entry));
             const allowed = recipients.filter((entry) => this.options.allowedRecipients.has(entry));
@@ -677,7 +722,7 @@ export class AgentRuntime {
             for (const to of allowed) {
               await writeMessageFile({
                 baseDir: this.options.baseDir,
-                threadId: message.threadId,
+                threadId: primary.threadId,
                 from: this.options.agentId,
                 to,
                 title,
@@ -734,6 +779,6 @@ export class AgentRuntime {
       }
       break;
     }
-    return { output, usedTool };
+    return output;
   }
 }

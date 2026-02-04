@@ -66,6 +66,7 @@ export class AgentManager {
         role: agent.role,
         baseDir: this.config.baseDir,
         historyDir: this.config.historyDir,
+        ashigaruProfiles: this.config.ashigaruProfiles,
         allowedRecipients,
         stateStore: this.stateStore,
         provider: agent.provider,
@@ -121,7 +122,8 @@ export class AgentManager {
         role: agent.role,
         agentId: agent.id,
         baseDir: this.config.baseDir,
-        historyDir: this.config.historyDir
+        historyDir: this.config.historyDir,
+        ashigaruProfiles: this.config.ashigaruProfiles
       });
       let created;
       try {
