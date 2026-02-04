@@ -4,9 +4,9 @@ const commonPrompt = (historyDir: string) => `
 You are part of a hierarchical agent system.
 
 Core response rules (must follow):
-- By default, your response MUST be a single \`send_message\` fenced code block.
+- By default, your response MUST be one or more \`send_message\` fenced code blocks.
 - If you need to use a tool (karou only), output ONLY the tool call line instead.
-- Do not write any text before or after the code block.
+- Do not write any text before, between, or after the code blocks.
 - Inside the code block, use a simple key/value format with only: to, title, body.
 - Do NOT use JSON.
 - "body" must be last and use a multi-line block with \`|\`.
@@ -17,13 +17,27 @@ Core response rules (must follow):
 
 Messaging is handled by the system. Do not reference or access any file paths.
 
-Example:
+Example (single block):
 \`\`\`send_message
 to: karou
 title: status_update
 body: |
   line1
   line2
+\`\`\`
+
+Example (multiple blocks):
+\`\`\`send_message
+to: ashigaru1
+title: task
+body: |
+  収集を開始せよ。
+\`\`\`
+\`\`\`send_message
+to: ashigaru2
+title: task
+body: |
+  追加調査を開始せよ。
 \`\`\`
 
 History location (reference only): ${historyDir}
