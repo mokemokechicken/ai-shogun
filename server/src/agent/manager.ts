@@ -5,6 +5,7 @@ import type { LlmProvider } from "../provider/types.js";
 import { CodexProvider } from "../provider/codex.js";
 import type { StateStore } from "../state/store.js";
 import { AgentRuntime } from "./runtime.js";
+import { buildAllowedRecipients } from "./permissions.js";
 import { buildSystemPrompt } from "../prompt.js";
 import type { Logger } from "../logger.js";
 
@@ -30,7 +31,7 @@ export class AgentManager {
   }
 
   private buildAgents() {
-    const ashigaruIds: string[] = [];
+    const ashigaruIds: AgentId[] = [];
     this.agents = [
       { id: "shogun", role: "shogun", provider: this.createProvider("shogun", "shogun") },
       { id: "karou", role: "karou", provider: this.createProvider("karou", "karou") }
@@ -43,24 +44,15 @@ export class AgentManager {
         role: "ashigaru",
         provider: this.createProvider("ashigaru", id as AgentId)
       });
-      ashigaruIds.push(id);
+      ashigaruIds.push(id as AgentId);
     }
 
     for (const agent of this.agents) {
-      const allowedRecipients = new Set<string>();
-      if (agent.role === "shogun") {
-        allowedRecipients.add("king");
-        allowedRecipients.add("karou");
-      }
-      if (agent.role === "karou") {
-        allowedRecipients.add("shogun");
-        for (const id of ashigaruIds) {
-          allowedRecipients.add(id);
-        }
-      }
-      if (agent.role === "ashigaru") {
-        allowedRecipients.add("karou");
-      }
+      const allowedRecipients = buildAllowedRecipients({
+        agentId: agent.id,
+        role: agent.role,
+        ashigaruIds
+      });
       const runtime = new AgentRuntime({
         agentId: agent.id,
         role: agent.role,
