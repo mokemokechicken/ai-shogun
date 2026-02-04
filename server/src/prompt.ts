@@ -14,6 +14,7 @@ Core response rules (must follow):
 - Do not include "from"; it is filled automatically.
 - If you are unsure, still send a brief status update to your direct superior.
 - The tools you can use are also available to other agent roles.
+- If your final output does not include any send_message block, it will be auto-sent to your direct superior.
 
 Messaging is handled by the system. Do not reference or access any file paths.
 

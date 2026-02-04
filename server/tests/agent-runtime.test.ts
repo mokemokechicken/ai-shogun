@@ -73,6 +73,62 @@ class WaitProvider implements LlmProvider {
   }
 }
 
+class AutoWrapProvider implements LlmProvider {
+  kind = "auto-wrap";
+  private threadId = "auto-wrap-thread";
+
+  async createThread(options?: { workingDirectory: string; initialInput?: string }): Promise<ProviderThreadHandle> {
+    if (options?.initialInput) {
+      await this.sendMessage({ threadId: this.threadId, input: options.initialInput });
+    }
+    return { id: this.threadId };
+  }
+
+  resumeThread(threadId: string): ProviderThreadHandle {
+    this.threadId = threadId;
+    return { id: threadId };
+  }
+
+  async sendMessage(input: ProviderRunInput): Promise<ProviderResponse> {
+    if (input.input.includes("ACK")) {
+      return { outputText: "ACK" };
+    }
+    return { outputText: "ashigaru1" };
+  }
+
+  async cancel(): Promise<void> {
+    return;
+  }
+}
+
+class ToolOnlyProvider implements LlmProvider {
+  kind = "tool-only";
+  private threadId = "tool-only-thread";
+
+  async createThread(options?: { workingDirectory: string; initialInput?: string }): Promise<ProviderThreadHandle> {
+    if (options?.initialInput) {
+      await this.sendMessage({ threadId: this.threadId, input: options.initialInput });
+    }
+    return { id: this.threadId };
+  }
+
+  resumeThread(threadId: string): ProviderThreadHandle {
+    this.threadId = threadId;
+    return { id: threadId };
+  }
+
+  async sendMessage(input: ProviderRunInput): Promise<ProviderResponse> {
+    if (input.input.includes("ACK")) {
+      return { outputText: "ACK" };
+    }
+    return { outputText: "TOOL:waitForMessage timeoutMs=0" };
+  }
+
+  async cancel(): Promise<void> {
+    return;
+  }
+}
+
 const waitForFile = async (dirPath: string, timeoutMs = 1500) => {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -178,5 +234,82 @@ describe("agent runtime", () => {
     expect(payload.status).toBe("message");
     expect(payload.message.from).toBe("ashigaru1");
     expect(payload.message.threadId).toBe(thread.id);
+  });
+
+  it("auto-wraps plain output when send_message is missing", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "shogun-agent-"));
+    const stateStore = new StateStore(path.join(tempDir, "state.json"), {
+      version: 1,
+      threads: {},
+      threadOrder: []
+    });
+    const thread = stateStore.createThread("Test");
+    await stateStore.save();
+
+    const runtime = new AgentRuntime({
+      agentId: "ashigaru1",
+      role: "ashigaru",
+      baseDir: tempDir,
+      historyDir: path.join(tempDir, "history"),
+      allowedRecipients: new Set(["karou"]),
+      stateStore,
+      provider: new AutoWrapProvider(),
+      workingDirectory: tempDir
+    });
+
+    runtime.enqueue({
+      id: "msg-1",
+      threadId: thread.id,
+      from: "karou",
+      to: "ashigaru1",
+      title: "rollcall",
+      body: "reply with your name only",
+      createdAt: new Date().toISOString()
+    });
+
+    const outDir = path.join(tempDir, "message_to", "karou", "from", "ashigaru1");
+    await waitForFile(outDir);
+    const entries = await fs.readdir(outDir);
+    const fileName = entries.find((entry) => entry.endsWith(".md"));
+    expect(fileName).toBeDefined();
+    const content = await fs.readFile(path.join(outDir, fileName!), "utf-8");
+    expect(content.trim()).toBe("ashigaru1");
+  });
+
+  it("does not auto-wrap tool output", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "shogun-agent-"));
+    const stateStore = new StateStore(path.join(tempDir, "state.json"), {
+      version: 1,
+      threads: {},
+      threadOrder: []
+    });
+    const thread = stateStore.createThread("Test");
+    await stateStore.save();
+
+    const runtime = new AgentRuntime({
+      agentId: "karou",
+      role: "karou",
+      baseDir: tempDir,
+      historyDir: path.join(tempDir, "history"),
+      allowedRecipients: new Set(["shogun"]),
+      stateStore,
+      provider: new ToolOnlyProvider(),
+      workingDirectory: tempDir
+    });
+
+    runtime.enqueue({
+      id: "msg-1",
+      threadId: thread.id,
+      from: "shogun",
+      to: "karou",
+      title: "test",
+      body: "do it",
+      createdAt: new Date().toISOString()
+    });
+
+    const outDir = path.join(tempDir, "message_to", "shogun", "from", "karou");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const entries = await fs.readdir(outDir).catch(() => []);
+    expect(entries.some((entry) => entry.endsWith(".md"))).toBe(false);
   });
 });

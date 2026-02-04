@@ -9,6 +9,7 @@ const sendMessageRegex = /```send_message\s*([\s\S]*?)```/g;
 const waitForMessageRegex = /^TOOL:waitForMessage(?:\s+timeoutMs=(\d+))?\s*$/;
 const defaultWaitTimeoutMs = 60_000;
 const maxLoggedOutputChars = 4000;
+const maxLoggedSendMessageChars = 800;
 
 const parseSendMessageBlock = (raw: string) => {
   const trimmed = raw.trim();
@@ -65,7 +66,17 @@ const parseSendMessageBlock = (raw: string) => {
   return null;
 };
 
-const maxLoggedSendMessageChars = 800;
+const getAutoReplyRecipient = (role: AgentRuntimeOptions["role"]) => {
+  if (role === "shogun") return "king";
+  if (role === "karou") return "shogun";
+  return "karou";
+};
+
+const isToolOutput = (output: string) => {
+  return output
+    .split("\n")
+    .some((line) => line.trim().startsWith("TOOL:"));
+};
 
 const parseSendMessages = (
   output: string,
@@ -322,6 +333,31 @@ export class AgentRuntime {
         agentId: this.options.agentId,
         threadId: message.threadId
       });
+      if (outbound.length === 0) {
+        const fallbackBody = output.trim();
+        if (fallbackBody && !isToolOutput(fallbackBody)) {
+          const to = getAutoReplyRecipient(this.options.role);
+          if (this.options.allowedRecipients.has(to)) {
+            outbound.push({
+              to,
+              title: `auto_reply: ${message.title}`,
+              body: fallbackBody
+            });
+            this.options.logger?.warn("auto_reply used", {
+              agentId: this.options.agentId,
+              threadId: message.threadId,
+              to,
+              title: message.title
+            });
+          } else {
+            this.options.logger?.warn("auto_reply skipped: recipient not allowed", {
+              agentId: this.options.agentId,
+              threadId: message.threadId,
+              to
+            });
+          }
+        }
+      }
       for (const entry of outbound) {
         if (!this.options.allowedRecipients.has(entry.to)) {
           continue;
