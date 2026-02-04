@@ -64,6 +64,7 @@ export default function App() {
   const [creatingThread, setCreatingThread] = useState(false);
   const [visibleAgents, setVisibleAgents] = useState<Set<string>>(initialVisibleAgents);
   const [error, setError] = useState<string | null>(null);
+  const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const selectedThreadRef = useRef<string | null>(null);
   const creatingThreadRef = useRef(false);
 
@@ -211,6 +212,11 @@ export default function App() {
       });
   }, [visibleAgentList, visibleAgents, agentById, messagesByAgent]);
 
+  const expandedTile = useMemo(() => {
+    if (!expandedAgentId) return null;
+    return agentTiles.find((tile) => tile.agentId === expandedAgentId) ?? null;
+  }, [agentTiles, expandedAgentId]);
+
   const formatActiveThread = (threadId?: string) => {
     if (!threadId) return "待機中";
     if (threadId === selectedThreadId) return "このスレッド";
@@ -341,7 +347,27 @@ export default function App() {
                   <article key={agentId} className={`agent-tile ${status?.status ?? "idle"}`}>
                     <div className="tile-head">
                       <h3>{agentId}</h3>
-                      <span className={`status-badge ${status?.status ?? "idle"}`}>{stateLabel}</span>
+                      <div className="tile-actions">
+                        <button
+                          type="button"
+                          className="tile-action"
+                          aria-label={`${agentId}の出力を拡大表示`}
+                          title="拡大表示"
+                          onClick={() => setExpandedAgentId(agentId)}
+                        >
+                          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                            <path
+                              d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                        <span className={`status-badge ${status?.status ?? "idle"}`}>{stateLabel}</span>
+                      </div>
                     </div>
                     <div className="tile-meta">
                       <span>キュー: {queueSize}</span>
@@ -361,6 +387,51 @@ export default function App() {
                 );
               })}
             </div>
+            {expandedTile && (
+              <div
+                className="tile-overlay"
+                role="dialog"
+                aria-modal="true"
+                aria-label={`${expandedTile.agentId}の出力`}
+                onClick={() => setExpandedAgentId(null)}
+              >
+                <div className="tile-overlay__card" onClick={(event) => event.stopPropagation()}>
+                  <div className="tile-overlay__head">
+                    <div>
+                      <p className="tile-overlay__eyebrow">エージェント出力</p>
+                      <h3>{expandedTile.agentId}</h3>
+                    </div>
+                    <button
+                      type="button"
+                      className="tile-action tile-action--close"
+                      aria-label="拡大表示を閉じる"
+                      title="閉じる"
+                      onClick={() => setExpandedAgentId(null)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="tile-meta">
+                    <span>状態: {expandedTile.status?.status === "busy" ? "稼働中" : "待機中"}</span>
+                    <span>キュー: {expandedTile.status?.queueSize ?? 0}</span>
+                    <span>作業: {formatActiveThread(expandedTile.status?.activeThreadId)}</span>
+                    <span>更新: {expandedTile.status?.updatedAt ? formatTime(expandedTile.status.updatedAt) : "-"}</span>
+                    <span>
+                      出力(選択中):{" "}
+                      {expandedTile.message ? formatTime(expandedTile.message.createdAt) : "-"}
+                    </span>
+                  </div>
+                  {expandedTile.message ? (
+                    <>
+                      <p className="tile-title">{expandedTile.message.title}</p>
+                      <pre className="tile-body tile-body--full">{expandedTile.message.body}</pre>
+                    </>
+                  ) : (
+                    <p className="tile-placeholder">選択中スレッドの出力はまだありません。</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </main>

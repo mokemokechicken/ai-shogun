@@ -322,6 +322,42 @@ pre {
   color: var(--muted);
 }
 
+.tile-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tile-action {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: #fff;
+  color: #2a2420;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.tile-action:hover {
+  border-color: rgba(0, 0, 0, 0.3);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+  transform: translateY(-1px);
+}
+
+.tile-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tile-action--close {
+  font-size: 18px;
+  line-height: 1;
+}
+
 .status-badge {
   border-radius: 999px;
   padding: 2px 8px;
@@ -351,11 +387,57 @@ pre {
 
 .tile-body {
   font-size: 12px;
+  max-height: 120px;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.tile-body--full {
+  max-height: none;
+  overflow: auto;
+  font-size: 13px;
 }
 
 .tile-placeholder {
   margin: 8px 0 0;
   font-size: 12px;
+  color: var(--muted);
+}
+
+.tile-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(18, 14, 10, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 999;
+}
+
+.tile-overlay__card {
+  background: #fff;
+  width: min(980px, 94vw);
+  max-height: 90vh;
+  border-radius: 20px;
+  padding: 18px;
+  overflow: auto;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+
+.tile-overlay__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.tile-overlay__eyebrow {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
   color: var(--muted);
 }
 
