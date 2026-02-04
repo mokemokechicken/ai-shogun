@@ -670,7 +670,8 @@ export class AgentRuntime {
     const primary = messages[0];
     let input = formatMessageBatchInput(messages);
     let output = "";
-    const maxLoops = 3;
+    let maxLoops = 3;
+    let extraWaitLoopGranted = false;
 
     const waitKey = WaitStore.buildKey(primary.threadId, this.options.agentId);
     const existingWait = await this.waitStore.load(waitKey);
@@ -836,6 +837,10 @@ export class AgentRuntime {
             const payload = waited ? { status: "message", message: waited } : { status: "timeout", timeoutMs };
             this.setActivity(waited ? "メッセージ受信" : "待機タイムアウト");
             results.push({ tool: "waitForMessage", ...payload });
+            if (!extraWaitLoopGranted) {
+              maxLoops += 1;
+              extraWaitLoopGranted = true;
+            }
             waitEncountered = true;
             continue;
           }
