@@ -6,20 +6,20 @@
       "ashigaru1": "low",
       "ashigaru2": "low",
       "ashigaru3": "medium",
-      "ashigaru4": "high",
-      "ashigaru5": "xhigh",
-      "ashigaru6": "medium",
-      "ashigaru7": "high"
+      "ashigaru4": "medium",
+      "ashigaru5": "high",
+      "ashigaru6": "high",
+      "ashigaru": "xhigh"
     }
   },
   "ashigaruProfiles": {
-    "ashigaru1": { "name": "迅速", "profile": "素早いレスポンス重視。短い回答・軽量タスクに向く。" },
-    "ashigaru2": { "name": "軽量調査", "profile": "低い推論負荷での調査・収集に向く。" },
-    "ashigaru3": { "name": "標準", "profile": "標準バランス。一般的な調査と整理に向く。" },
-    "ashigaru4": { "name": "深掘り", "profile": "高めの推論での深掘りや検証に向く。" },
-    "ashigaru5": { "name": "重鎮", "profile": "最重視の深い推論・コーディング・難題の担当。" },
-    "ashigaru6": { "name": "標準II", "profile": "標準バランスの追加担当。調査と整理を並列化。" },
-    "ashigaru7": { "name": "深掘りII", "profile": "高めの推論の追加担当。検証と深掘りを並列化。" }
+    "ashigaru1": { "name": "軽量調査I", "profile": "低い推論負荷での調査・収集に向く。" },
+    "ashigaru2": { "name": "軽量調査II", "profile": "低い推論負荷での調査・収集に向く。" },
+    "ashigaru3": { "name": "標準I", "profile": "標準バランス。一般的な調査と整理に向く。" },
+    "ashigaru4": { "name": "標準II", "profile": "標準バランスの追加担当。調査と整理を並列化。" },
+    "ashigaru5": { "name": "深掘りI", "profile": "高めの推論での深掘りや検証に向く。" },
+    "ashigaru6": { "name": "深掘りII", "profile": "高めの推論の追加担当。検証と深掘りを並列化。" },
+    "ashigaru7": { "name": "重鎮", "profile": "最重視の深い推論・コーディング・難題の担当。" }
   },
   "ashigaruCount": 7,
   "server": {
