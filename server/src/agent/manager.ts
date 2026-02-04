@@ -141,13 +141,13 @@ export class AgentManager {
     await this.stateStore.save();
   }
 
-  enqueue(to: AgentId, message: ShogunMessage) {
+  enqueue(to: AgentId, message: ShogunMessage): Promise<void> {
     const runtime = this.runtimes.get(to);
     if (!runtime) {
       this.logger?.warn("enqueue dropped: runtime missing", { to, threadId: message.threadId });
-      return;
+      return Promise.resolve();
     }
-    runtime.enqueue(message);
+    return runtime.enqueue(message);
   }
 
   stopAll() {

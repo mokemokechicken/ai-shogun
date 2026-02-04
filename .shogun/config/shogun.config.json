@@ -1,4 +1,10 @@
 {
+  "models": {
+    "default": "gpt-5.2-codex",
+    "shogun": "gpt-5.2-codex",
+    "karou": "gpt-5.2-codex",
+    "ashigaru": "gpt-5.2-codex"
+  },
   "codex": {
     "reasoningEffort": {
       "shogun": "medium",

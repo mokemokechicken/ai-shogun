@@ -60,10 +60,21 @@ const main = async () => {
   try {
     await fs.access(shogunGitignorePath);
   } catch {
-    const lines = ["# Runtime data (generated)", "logs/", "history/", "message_to/", "state.json", "tmp/"];
+	    const lines = [
+	      "# Runtime data (generated)",
+	      "logs/",
+	      "history/",
+	      "message_to/",
+	      "message_processing/",
+	      "waits/",
+	      "message_ledger.json",
+	      "state.json",
+	      "tmp/"
+	    ];
     await fs.writeFile(shogunGitignorePath, `${lines.join("\n")}\n`, "utf-8");
   }
   await ensureDir(path.join(config.baseDir, "message_to"));
+  await ensureDir(path.join(config.baseDir, "message_processing"));
   await ensureDir(config.historyDir);
   await ensureDir(path.join(config.baseDir, "tmp"));
   const sharedRulesDir = path.join(config.baseDir, "rules");
@@ -140,7 +151,7 @@ const main = async () => {
     broadcast(wss, { type: "agent_status", agents: agentManager.getStatuses() });
   });
 
-  startMessageWatcher(
+  await startMessageWatcher(
     config.baseDir,
     config.historyDir,
     historyStore,
@@ -162,7 +173,7 @@ const main = async () => {
           to: message.to,
           title: message.title
         });
-        agentManager.enqueue(message.to, message);
+        await agentManager.enqueue(message.to, message);
       }
     },
     logger

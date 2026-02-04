@@ -42,10 +42,10 @@ class SendMessageToolProvider implements LlmProvider {
       return { outputText: "DONE" };
     }
 
-    this.callCount += 1;
-    if (this.callCount === 1) {
-      return { outputText: `TOOL:sendMessage to=${this.target} title=report body=\"done\"` };
-    }
+	    this.callCount += 1;
+	    if (this.callCount === 1) {
+	      return { outputText: `TOOL:sendMessage to=${this.target} title=report body="done"` };
+	    }
 
     return { outputText: "DONE" };
   }

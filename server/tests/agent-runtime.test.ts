@@ -175,12 +175,71 @@ class ToolOnlyProvider implements LlmProvider {
   }
 }
 
+class DurableWaitProvider implements LlmProvider {
+  kind = "durable-wait";
+  private threadId = "durable-wait-thread";
+  private stage = new Map<string, "fresh" | "waiting">();
+
+  async createThread(options?: { workingDirectory: string; initialInput?: string }): Promise<ProviderThreadHandle> {
+    if (options?.initialInput) {
+      await this.sendMessage({ threadId: this.threadId, input: options.initialInput });
+    }
+    return { id: this.threadId };
+  }
+
+  resumeThread(threadId: string): ProviderThreadHandle {
+    this.threadId = threadId;
+    return { id: threadId };
+  }
+
+  async sendMessage(input: ProviderRunInput): Promise<ProviderResponse> {
+    if (input.input.includes("ACK")) {
+      return { outputText: "ACK" };
+    }
+    const stage = this.stage.get(input.threadId) ?? "fresh";
+    if (input.input.includes("TOOL_RESULT waitForMessage")) {
+      if (stage !== "waiting") {
+        throw new Error(`unexpected wait tool result in stage ${stage}`);
+      }
+      return {
+        outputText: `TOOL:sendMessage to=shogun title=waited body='ok'`
+      };
+    }
+    if (input.input.includes("TOOL_RESULT sendMessage")) {
+      return { outputText: "" };
+    }
+    if (stage !== "fresh") {
+      throw new Error(`unexpected initial message in stage ${stage}`);
+    }
+    this.stage.set(input.threadId, "waiting");
+    return { outputText: "TOOL:waitForMessage timeoutMs=0" };
+  }
+
+  async cancel(): Promise<void> {
+    return;
+  }
+}
+
 const waitForFile = async (dirPath: string, timeoutMs = 1500) => {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
       const entries = await fs.readdir(dirPath);
       if (entries.some((entry) => entry.endsWith(".md"))) return;
+    } catch {
+      // ignore
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("timeout");
+};
+
+const waitForPath = async (filePath: string, timeoutMs = 1500) => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      await fs.stat(filePath);
+      return;
     } catch {
       // ignore
     }
@@ -412,5 +471,86 @@ describe("agent runtime", () => {
     await new Promise((resolve) => setTimeout(resolve, 400));
     const entries = await fs.readdir(outDir).catch(() => []);
     expect(entries.some((entry) => entry.endsWith(".md"))).toBe(false);
+  });
+
+  it("restores wait state after restart", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "shogun-agent-"));
+    const statePath = path.join(tempDir, "state.json");
+    const stateStore1 = new StateStore(statePath, {
+      version: 1,
+      threads: {},
+      threadOrder: []
+    });
+    const thread = stateStore1.createThread("Test");
+    await stateStore1.save();
+
+    const provider = new DurableWaitProvider();
+
+    const runtime1 = new AgentRuntime({
+      agentId: "karou",
+      role: "karou",
+      baseDir: tempDir,
+      historyDir: path.join(tempDir, "history"),
+      allowedRecipients: new Set(["shogun"]),
+      stateStore: stateStore1,
+      provider,
+      workingDirectory: tempDir
+    });
+
+    void runtime1.enqueue({
+      id: "msg-1",
+      threadId: thread.id,
+      from: "shogun",
+      to: "karou",
+      title: "test",
+      body: "do it",
+      createdAt: new Date().toISOString()
+    });
+
+    const waitPath = path.join(tempDir, "waits", "pending", `${thread.id}__karou.json`);
+    await waitForPath(waitPath);
+
+    const stateStore2 = await StateStore.load(statePath);
+    const runtime2 = new AgentRuntime({
+      agentId: "karou",
+      role: "karou",
+      baseDir: tempDir,
+      historyDir: path.join(tempDir, "history"),
+      allowedRecipients: new Set(["shogun"]),
+      stateStore: stateStore2,
+      provider,
+      workingDirectory: tempDir
+    });
+
+    await runtime2.enqueue({
+      id: "msg-2",
+      threadId: thread.id,
+      from: "ashigaru1",
+      to: "karou",
+      title: "follow-up",
+      body: "done",
+      createdAt: new Date().toISOString()
+    });
+
+    await runtime2.enqueue({
+      id: "msg-1",
+      threadId: thread.id,
+      from: "shogun",
+      to: "karou",
+      title: "test",
+      body: "do it",
+      createdAt: new Date().toISOString()
+    });
+
+    const outDir = path.join(tempDir, "message_to", "shogun", "from", "karou");
+    await waitForFile(outDir);
+    const entries = await fs.readdir(outDir);
+    expect(entries.some((entry) => entry.includes("__waited.md"))).toBe(true);
+
+    const waitExistsAfter = await fs
+      .stat(waitPath)
+      .then(() => true)
+      .catch(() => false);
+    expect(waitExistsAfter).toBe(false);
   });
 });

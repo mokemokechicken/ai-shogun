@@ -6,6 +6,7 @@ import { writeMessageFile } from "../message/writer.js";
 import type { StateStore } from "../state/store.js";
 import type { LlmProvider, ProviderProgressUpdate, ProviderResponse } from "../provider/types.js";
 import type { Logger } from "../logger.js";
+import { WaitStore, type WaitRecord } from "../wait/store.js";
 
 const waitForMessageRegex = /^TOOL:waitForMessage(?:\s+timeoutMs=(\d+))?\s*$/;
 const interruptAgentRegex = /^TOOL:interruptAgent(?:\s+(.*))?\s*$/;
@@ -206,14 +207,17 @@ export class AgentRuntime {
   private abortController: AbortController | null = null;
   private abortReason: "stop" | "interrupt" | null = null;
   private stopRequested = false;
+  private waitStore: WaitStore;
   private messageWaiter: {
     threadId: string;
     resolve: (message: ShogunMessage | null) => void;
     timer?: NodeJS.Timeout;
   } | null = null;
+  private completionWaiters = new Map<string, Array<{ resolve: () => void; reject: (_error: unknown) => void }>>();
 
   constructor(options: AgentRuntimeOptions) {
     this.options = options;
+    this.waitStore = new WaitStore(options.baseDir);
   }
 
   private touchStatus() {
@@ -221,8 +225,47 @@ export class AgentRuntime {
     this.options.onStatusChange?.();
   }
 
-  enqueue(message: ShogunMessage) {
-    if (this.tryResolveMessageWaiter(message)) return;
+  enqueue = async (message: ShogunMessage): Promise<void> => {
+    const waitKey = WaitStore.buildKey(message.threadId, this.options.agentId);
+    const waitRecord = await this.waitStore.load(waitKey);
+    if (
+      waitRecord &&
+      waitRecord.version === 1 &&
+      waitRecord.status === "pending" &&
+      waitRecord.threadId === message.threadId &&
+      waitRecord.agentId === this.options.agentId &&
+      waitRecord.messageId !== message.id
+    ) {
+      const now = new Date().toISOString();
+      const updated: WaitRecord = {
+        ...waitRecord,
+        status: "received",
+        updatedAt: now,
+        receivedAt: now,
+        receivedMessage: message
+      };
+      await this.waitStore.upsert(updated);
+      if (this.tryResolveMessageWaiter(message)) {
+        return;
+      }
+      this.options.logger?.info("message stored for wait resume", {
+        agentId: this.options.agentId,
+        threadId: message.threadId,
+        messageId: message.id,
+        waitKey
+      });
+      this.touchStatus();
+      return;
+    }
+
+    if (this.tryResolveMessageWaiter(message)) {
+      return Promise.resolve();
+    }
+    const promise = new Promise<void>((resolve, reject) => {
+      const waiters = this.completionWaiters.get(message.id) ?? [];
+      waiters.push({ resolve, reject });
+      this.completionWaiters.set(message.id, waiters);
+    });
     this.queue.push(message);
     this.options.logger?.info("agent message enqueued", {
       agentId: this.options.agentId,
@@ -234,7 +277,8 @@ export class AgentRuntime {
     });
     this.touchStatus();
     void this.processQueue();
-  }
+    return promise;
+  };
 
   getStatus(): AgentSnapshot {
     return {
@@ -252,7 +296,11 @@ export class AgentRuntime {
 
   stop() {
     this.stopRequested = true;
+    const queued = this.queue;
     this.queue = [];
+    for (const message of queued) {
+      this.rejectCompletionWaiters(message.id, new Error("agent stopped"));
+    }
     this.resolveMessageWaiter(null);
     if (this.abortController) {
       this.abortReason = "stop";
@@ -379,22 +427,6 @@ export class AgentRuntime {
     return message ?? null;
   }
 
-  private peekQueuedMessages(threadId: string, limit = 5) {
-    const queued = this.queue.filter((entry) => entry.threadId === threadId);
-    if (queued.length === 0) {
-      return { count: 0, latest: [] as Array<{ from: AgentId; title: string; ts: string }> };
-    }
-    const latest = queued
-      .slice(-limit)
-      .reverse()
-      .map((message) => ({
-        from: message.from,
-        title: message.title,
-        ts: message.createdAt
-      }));
-    return { count: queued.length, latest };
-  }
-
   private drainQueuedMessages(threadId: string) {
     if (this.queue.length === 0) return [] as ShogunMessage[];
     const drained: ShogunMessage[] = [];
@@ -414,6 +446,15 @@ export class AgentRuntime {
   }
 
   private async waitForMessage(threadId: string, timeoutMs?: number) {
+    const waitKey = WaitStore.buildKey(threadId, this.options.agentId);
+    const waitRecord = await this.waitStore.load(waitKey);
+    if (waitRecord?.status === "received" && waitRecord.receivedMessage) {
+      return waitRecord.receivedMessage;
+    }
+    if (waitRecord?.status === "timeout") {
+      return null;
+    }
+
     const queued = this.popQueuedMessage(threadId);
     if (queued) return queued;
 
@@ -431,6 +472,18 @@ export class AgentRuntime {
           if (this.messageWaiter === waiter) {
             this.messageWaiter = null;
           }
+          void (async () => {
+            const current = await this.waitStore.load(waitKey);
+            if (!current || current.status !== "pending") {
+              return;
+            }
+            const now = new Date().toISOString();
+            await this.waitStore.upsert({
+              ...current,
+              status: "timeout",
+              updatedAt: now
+            });
+          })();
           resolve(null);
         }, effectiveTimeoutMs);
       }
@@ -439,7 +492,11 @@ export class AgentRuntime {
   }
 
   interrupt(reason: "stop" | "interrupt") {
+    const queued = this.queue;
     this.queue = [];
+    for (const message of queued) {
+      this.rejectCompletionWaiters(message.id, new Error(`agent interrupted: ${reason}`));
+    }
     this.resolveMessageWaiter(null);
     if (this.abortController) {
       this.abortReason = reason;
@@ -447,6 +504,24 @@ export class AgentRuntime {
     }
     this.recordActivity(reason === "interrupt" ? "割り込み停止" : "停止");
     this.touchStatus();
+  }
+
+  private resolveCompletionWaiters(messageId: string) {
+    const waiters = this.completionWaiters.get(messageId);
+    if (!waiters) return;
+    this.completionWaiters.delete(messageId);
+    for (const waiter of waiters) {
+      waiter.resolve();
+    }
+  }
+
+  private rejectCompletionWaiters(messageId: string, error: unknown) {
+    const waiters = this.completionWaiters.get(messageId);
+    if (!waiters) return;
+    this.completionWaiters.delete(messageId);
+    for (const waiter of waiters) {
+      waiter.reject(error);
+    }
   }
 
   private async ensureSession(threadId: string) {
@@ -509,6 +584,7 @@ export class AgentRuntime {
     } else {
       this.setActivity(`指示処理開始: ${message.title}`);
     }
+    let processingError: unknown = null;
     try {
       this.options.logger?.info("agent message processing started", {
         agentId: this.options.agentId,
@@ -521,6 +597,9 @@ export class AgentRuntime {
       const sessionThreadId = await this.ensureSession(message.threadId);
       this.abortController = new AbortController();
       const output = await this.runWithTools(sessionThreadId, batch);
+      if (this.abortReason) {
+        throw new Error(`agent aborted: ${this.abortReason}`);
+      }
       const fallbackBody = output.trim();
       if (fallbackBody && !isToolOutput(fallbackBody)) {
         const to = getAutoReplyRecipient(this.options.role);
@@ -548,6 +627,7 @@ export class AgentRuntime {
         }
       }
     } catch (error) {
+      processingError = error;
       this.options.logger?.error("agent message processing failed", {
         agentId: this.options.agentId,
         threadId: message.threadId,
@@ -558,10 +638,24 @@ export class AgentRuntime {
       });
       console.error(`[agent:${this.options.agentId}]`, error);
     } finally {
+      if (!processingError) {
+        const waitKey = WaitStore.buildKey(message.threadId, this.options.agentId);
+        const record = await this.waitStore.load(waitKey);
+        if (record?.version === 1 && record.messageId === message.id) {
+          await this.waitStore.remove(waitKey);
+        }
+      }
       this.abortController = null;
       this.activeThreadId = undefined;
       this.setBusy(false);
       this.abortReason = null;
+      for (const entry of batch) {
+        if (processingError) {
+          this.rejectCompletionWaiters(entry.id, processingError);
+        } else {
+          this.resolveCompletionWaiters(entry.id);
+        }
+      }
       const shouldContinue = !this.stopRequested;
       if (this.stopRequested) {
         this.stopRequested = false;
@@ -577,6 +671,35 @@ export class AgentRuntime {
     let input = formatMessageBatchInput(messages);
     let output = "";
     const maxLoops = 3;
+
+    const waitKey = WaitStore.buildKey(primary.threadId, this.options.agentId);
+    const existingWait = await this.waitStore.load(waitKey);
+    if (
+      existingWait &&
+      existingWait.version === 1 &&
+      existingWait.threadId === primary.threadId &&
+      existingWait.agentId === this.options.agentId &&
+      existingWait.messageId === primary.id &&
+      (existingWait.status === "pending" || existingWait.status === "received" || existingWait.status === "timeout")
+    ) {
+      this.options.logger?.info("resuming wait state", {
+        agentId: this.options.agentId,
+        threadId: primary.threadId,
+        messageId: primary.id,
+        status: existingWait.status,
+        waitKey
+      });
+      const timeoutMs = existingWait.timeoutMs;
+      const waited =
+        existingWait.status === "received" && existingWait.receivedMessage
+          ? existingWait.receivedMessage
+          : existingWait.status === "timeout"
+            ? null
+            : await this.waitForMessage(primary.threadId, timeoutMs);
+      const payload = waited ? { status: "message", message: waited } : { status: "timeout", timeoutMs };
+      input = `TOOL_RESULT waitForMessage: ${JSON.stringify(payload)}`;
+    }
+
     for (let i = 0; i < maxLoops; i += 1) {
       if (this.stopRequested) break;
       const startedAt = Date.now();
@@ -659,14 +782,58 @@ export class AgentRuntime {
             continue;
           }
           if (toolRequest.name === "waitForMessage") {
+            if (this.options.role !== "karou" && this.options.role !== "shogun") {
+              this.options.logger?.warn("tool ignored: waitForMessage not allowed", {
+                agentId: this.options.agentId,
+                threadId
+              });
+              results.push({ tool: "waitForMessage", status: "ignored" });
+              continue;
+            }
             const waitStartedAt = Date.now();
             const stopWaitHeartbeat = this.startActivityHeartbeat("メッセージ待機中", waitStartedAt);
-            const waited = await this.waitForMessage(primary.threadId, toolRequest.timeoutMs);
-            stopWaitHeartbeat();
             const timeoutMs = toolRequest.timeoutMs ?? defaultWaitTimeoutMs;
-            const payload = waited
-              ? { status: "message", message: waited }
-              : { status: "timeout", timeoutMs };
+            const now = new Date().toISOString();
+            const record: WaitRecord = {
+              version: 1,
+              key: waitKey,
+              status: "pending",
+              threadId: primary.threadId,
+              agentId: this.options.agentId,
+              providerThreadId: threadId,
+              timeoutMs,
+              messageId: primary.id,
+              messageFrom: primary.from,
+              messageTo: primary.to,
+              messageTitle: primary.title,
+              messageCreatedAt: primary.createdAt,
+              createdAt: existingWait?.createdAt ?? now,
+              updatedAt: now,
+              receivedAt: existingWait?.receivedAt,
+              receivedMessage: existingWait?.receivedMessage
+            };
+            await this.waitStore.upsert(record);
+
+            const waited = await this.waitForMessage(primary.threadId, timeoutMs);
+            stopWaitHeartbeat();
+            const finishedAt = new Date().toISOString();
+            if (waited) {
+              await this.waitStore.upsert({
+                ...record,
+                status: "received",
+                updatedAt: finishedAt,
+                receivedAt: finishedAt,
+                receivedMessage: waited
+              });
+            } else {
+              await this.waitStore.upsert({
+                ...record,
+                status: "timeout",
+                updatedAt: finishedAt
+              });
+            }
+
+            const payload = waited ? { status: "message", message: waited } : { status: "timeout", timeoutMs };
             this.setActivity(waited ? "メッセージ受信" : "待機タイムアウト");
             results.push({ tool: "waitForMessage", ...payload });
             waitEncountered = true;
@@ -714,19 +881,6 @@ export class AgentRuntime {
             const allowed = recipients.filter((entry) => this.options.allowedRecipients.has(entry));
             if (allowed.length === 0) {
               results.push({ tool: "sendMessage", status: "denied", to: denied, title });
-              continue;
-            }
-            const pending = this.peekQueuedMessages(primary.threadId, 5);
-            if (pending.count > 0) {
-              this.setActivity(`送信保留 (未処理${pending.count}件)`);
-              results.push({
-                tool: "sendMessage",
-                status: "deferred",
-                to: allowed,
-                denied,
-                title,
-                pending
-              });
               continue;
             }
             const resolvedBody = await this.resolveSendMessageBody(toolRequest.body, toolRequest.bodyFile);

@@ -92,7 +92,7 @@ export const loadConfig = async (rootDir: string): Promise<AppConfig> => {
 
   const defaultModel = envString(
     fileConfig.models?.default ?? process.env.SHOGUN_MODEL_DEFAULT ?? process.env.CODEX_MODEL,
-    "gpt-5.2"
+    "gpt-5.2-codex"
   );
 
   return {

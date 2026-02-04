@@ -6,6 +6,7 @@ import type { AgentId } from "@ai-shogun/shared";
 export class StateStore {
   private filePath: string;
   private state: AppState;
+  private saveChain: Promise<void> = Promise.resolve();
 
   constructor(filePath: string, initialState?: AppState) {
     this.filePath = filePath;
@@ -85,6 +86,11 @@ export class StateStore {
   }
 
   async save() {
-    await writeJsonFile(this.filePath, this.state);
+    const run = async () => {
+      await writeJsonFile(this.filePath, this.state);
+    };
+    const next = this.saveChain.then(run, run);
+    this.saveChain = next;
+    await next;
   }
 }

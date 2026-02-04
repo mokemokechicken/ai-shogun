@@ -32,5 +32,36 @@ export const readJsonFile = async <T>(filePath: string): Promise<T | null> => {
 export const writeJsonFile = async (filePath: string, data: unknown) => {
   const content = JSON.stringify(data, null, 2);
   await ensureDir(path.dirname(filePath));
-  await fs.writeFile(filePath, content, "utf-8");
+  const dir = path.dirname(filePath);
+  const baseName = path.basename(filePath);
+  const tempPath = path.join(dir, `.${baseName}.${process.pid}.${Date.now()}.tmp`);
+  const bakPath = `${filePath}.bak`;
+  await fs.writeFile(tempPath, content, "utf-8");
+  try {
+    await fs.rm(bakPath, { force: true });
+  } catch {
+    // ignore
+  }
+  try {
+    await fs.rename(filePath, bakPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      try {
+        await fs.rm(tempPath, { force: true });
+      } catch {
+        // ignore
+      }
+      throw error;
+    }
+  }
+  try {
+    await fs.rename(tempPath, filePath);
+  } catch (error) {
+    try {
+      await fs.rm(tempPath, { force: true });
+    } catch {
+      // ignore
+    }
+    throw error;
+  }
 };
