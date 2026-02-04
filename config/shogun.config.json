@@ -1,4 +1,15 @@
 {
+  "codex": {
+    "reasoningEffort": {
+      "shogun": "medium",
+      "karou": "high",
+      "ashigaru1": "minimal",
+      "ashigaru2": "low",
+      "ashigaru3": "medium",
+      "ashigaru4": "high",
+      "ashigaru5": "xhigh"
+    }
+  },
   "server": {
     "port": 4090
   }

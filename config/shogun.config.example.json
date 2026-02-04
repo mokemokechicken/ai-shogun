@@ -10,6 +10,15 @@
   "codex": {
     "config": {
       "approval_policy": "never"
+    },
+    "reasoningEffort": {
+      "shogun": "medium",
+      "karou": "high",
+      "ashigaru1": "minimal",
+      "ashigaru2": "low",
+      "ashigaru3": "medium",
+      "ashigaru4": "high",
+      "ashigaru5": "xhigh"
     }
   },
   "server": {

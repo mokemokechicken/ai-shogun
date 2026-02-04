@@ -1,6 +1,7 @@
 import {
   Codex,
   type CodexOptions,
+  type ModelReasoningEffort,
   type ThreadEvent,
   type ThreadItem,
   type Usage
@@ -86,15 +87,26 @@ export class CodexProvider implements LlmProvider {
   private codex: Codex;
   private threads = new Map<string, CodexThread>();
   private model: string;
+  private modelReasoningEffort?: ModelReasoningEffort;
 
-  constructor(options: { model: string; config: Record<string, unknown>; env: Record<string, string> }) {
+  constructor(options: {
+    model: string;
+    config: Record<string, unknown>;
+    env: Record<string, string>;
+    modelReasoningEffort?: ModelReasoningEffort;
+  }) {
     this.model = options.model;
+    this.modelReasoningEffort = options.modelReasoningEffort;
     const env = Object.keys(options.env).length > 0 ? options.env : undefined;
     this.codex = new Codex({ config: options.config as CodexOptions["config"], env });
   }
 
   async createThread(options: { workingDirectory: string; initialInput?: string }): Promise<ProviderThreadHandle> {
-    const thread = this.codex.startThread({ workingDirectory: options.workingDirectory, model: this.model });
+    const thread = this.codex.startThread({
+      workingDirectory: options.workingDirectory,
+      model: this.model,
+      modelReasoningEffort: this.modelReasoningEffort
+    });
     if (options.initialInput) {
       await thread.run(options.initialInput);
     }
@@ -108,7 +120,10 @@ export class CodexProvider implements LlmProvider {
 
   resumeThread(threadId: string): ProviderThreadHandle {
     if (!this.threads.has(threadId)) {
-      const thread = this.codex.resumeThread(threadId, { model: this.model });
+      const thread = this.codex.resumeThread(threadId, {
+        model: this.model,
+        modelReasoningEffort: this.modelReasoningEffort
+      });
       this.threads.set(threadId, thread as CodexThread);
     }
     return { id: threadId };

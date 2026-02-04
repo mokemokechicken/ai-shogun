@@ -1,6 +1,6 @@
 import type { AgentId, AgentSnapshot, ShogunMessage } from "@ai-shogun/shared";
 import type { AppConfig } from "../config.js";
-import { resolveRoleModel } from "../config.js";
+import { resolveReasoningEffort, resolveRoleModel } from "../config.js";
 import type { LlmProvider } from "../provider/types.js";
 import { CodexProvider } from "../provider/codex.js";
 import type { StateStore } from "../state/store.js";
@@ -31,18 +31,18 @@ export class AgentManager {
 
   private buildAgents() {
     const ashigaruIds: string[] = [];
-    const shogunProvider = this.createProvider("shogun");
-    const karouProvider = this.createProvider("karou");
-    const ashigaruProvider = this.createProvider("ashigaru");
-
     this.agents = [
-      { id: "shogun", role: "shogun", provider: shogunProvider },
-      { id: "karou", role: "karou", provider: karouProvider }
+      { id: "shogun", role: "shogun", provider: this.createProvider("shogun", "shogun") },
+      { id: "karou", role: "karou", provider: this.createProvider("karou", "karou") }
     ];
 
     for (let i = 1; i <= this.config.ashigaruCount; i += 1) {
       const id = `ashigaru${i}`;
-      this.agents.push({ id: id as AgentId, role: "ashigaru", provider: ashigaruProvider });
+      this.agents.push({
+        id: id as AgentId,
+        role: "ashigaru",
+        provider: this.createProvider("ashigaru", id as AgentId)
+      });
       ashigaruIds.push(id);
     }
 
@@ -78,10 +78,23 @@ export class AgentManager {
     }
   }
 
-  private createProvider(role: "shogun" | "karou" | "ashigaru") {
+  private createProvider(role: "shogun" | "karou" | "ashigaru", agentId: AgentId) {
     const model = resolveRoleModel(this.config, role);
+    const effort = resolveReasoningEffort(this.config, agentId, role);
     if (this.config.provider === "codex") {
-      return new CodexProvider({ model, config: this.config.codex.config, env: this.config.codex.env });
+      if (effort.raw && !effort.value) {
+        this.logger?.warn("invalid reasoning effort; falling back to default", {
+          agentId,
+          role,
+          value: effort.raw
+        });
+      }
+      return new CodexProvider({
+        model,
+        config: this.config.codex.config,
+        env: this.config.codex.env,
+        modelReasoningEffort: effort.value
+      });
     }
     throw new Error(`Unsupported provider: ${this.config.provider}`);
   }

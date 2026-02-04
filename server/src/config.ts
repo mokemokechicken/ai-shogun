@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import type { ModelReasoningEffort } from "@openai/codex-sdk";
 
 const rawConfigSchema = z.object({
   baseDir: z.string().optional(),
@@ -18,7 +19,8 @@ const rawConfigSchema = z.object({
   codex: z
     .object({
       config: z.record(z.string(), z.unknown()).optional(),
-      env: z.record(z.string(), z.string()).optional()
+      env: z.record(z.string(), z.string()).optional(),
+      reasoningEffort: z.record(z.string(), z.string()).optional()
     })
     .optional(),
   server: z
@@ -45,6 +47,7 @@ export interface AppConfig {
   codex: {
     config: Record<string, unknown>;
     env: Record<string, string>;
+    reasoningEffort: Record<string, string>;
   };
   server: {
     port: number;
@@ -101,12 +104,41 @@ export const loadConfig = async (rootDir: string): Promise<AppConfig> => {
       },
       env: {
         ...(fileConfig.codex?.env ?? {})
+      },
+      reasoningEffort: {
+        ...(fileConfig.codex?.reasoningEffort ?? {})
       }
     },
     server: {
       port: fileConfig.server?.port ?? parseEnvNumber(process.env.SHOGUN_PORT, 4090)
     }
   };
+};
+
+const reasoningEffortValues = new Set<ModelReasoningEffort>(["minimal", "low", "medium", "high", "xhigh"]);
+
+const normalizeReasoningEffort = (value?: string): ModelReasoningEffort | undefined => {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "minimaru") return "minimal";
+  if (reasoningEffortValues.has(normalized as ModelReasoningEffort)) {
+    return normalized as ModelReasoningEffort;
+  }
+  return undefined;
+};
+
+export const resolveReasoningEffort = (
+  config: AppConfig,
+  agentId: string,
+  role: "shogun" | "karou" | "ashigaru"
+) => {
+  const map = config.codex.reasoningEffort ?? {};
+  const raw =
+    map[agentId] ??
+    map[role] ??
+    (role === "ashigaru" ? map.ashigaru : undefined) ??
+    map.default;
+  return { raw, value: normalizeReasoningEffort(raw) };
 };
 
 export const resolveRoleModel = (config: AppConfig, role: "shogun" | "karou" | "ashigaru") => {
