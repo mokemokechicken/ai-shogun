@@ -1,0 +1,6 @@
+# Runtime data (generated)
+logs/
+history/
+message_to/
+state.json
+tmp/

@@ -45,8 +45,9 @@ const loadSkillsIndex = (baseDir: string) => {
   }
 };
 
-const commonPrompt = (baseDir: string, historyDir: string) => {
+const commonPrompt = (baseDir: string, historyDir: string, agentId: AgentId) => {
   const { rulesPath, rules } = loadSharedRules(baseDir);
+  const workingDir = path.join(baseDir, "tmp", agentId);
   return `
 You are part of a hierarchical agent system.
 
@@ -91,6 +92,7 @@ System notes:
 - Shared rules index: ${rulesPath}. Its contents are loaded at startup for all agents.
 - Editing index.md (and linked rule/memory files) updates the common rules for everyone.
 - .shogun/skills/ is reserved for local skills.
+- Working directory for your scratch files: ${workingDir}. Create it if missing.
 
 The shared rules are provided below for reference.
 
@@ -143,7 +145,7 @@ export const buildSystemPrompt = (params: {
   baseDir: string;
   historyDir: string;
 }) => {
-  const base = commonPrompt(params.baseDir, params.historyDir);
+  const base = commonPrompt(params.baseDir, params.historyDir, params.agentId);
   if (params.role === "shogun") {
     return `
 You are the shogun.

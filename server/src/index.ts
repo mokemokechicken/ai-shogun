@@ -55,8 +55,16 @@ const main = async () => {
   registerProcessHandlers(logger);
 
   await ensureDir(config.baseDir);
+  const shogunGitignorePath = path.join(config.baseDir, ".gitignore");
+  try {
+    await fs.access(shogunGitignorePath);
+  } catch {
+    const lines = ["# Runtime data (generated)", "logs/", "history/", "message_to/", "state.json", "tmp/"];
+    await fs.writeFile(shogunGitignorePath, `${lines.join("\n")}\n`, "utf-8");
+  }
   await ensureDir(path.join(config.baseDir, "message_to"));
   await ensureDir(config.historyDir);
+  await ensureDir(path.join(config.baseDir, "tmp"));
   const sharedRulesDir = path.join(config.baseDir, "rules");
   await ensureDir(sharedRulesDir);
   const sharedRulesIndexPath = path.join(sharedRulesDir, "index.md");
