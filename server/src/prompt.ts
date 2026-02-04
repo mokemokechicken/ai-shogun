@@ -4,16 +4,23 @@ import type { AgentId } from "@ai-shogun/shared";
 
 const sharedRulesRelativePath = path.join("rules", "index.md");
 const skillsIndexRelativePath = path.join("skills", "index.md");
-const ashigaruProfiles: Record<string, string> = {
-  ashigaru1: "素早いレスポンス重視。短い回答・軽量タスクに向く。",
-  ashigaru2: "低い推論負荷での調査・収集に向く。",
-  ashigaru3: "標準バランス。一般的な調査と整理に向く。",
-  ashigaru4: "高めの推論での深掘りや検証に向く。",
-  ashigaru5: "最重視の深い推論・コーディング・難題の担当。"
+const ashigaruProfiles: Record<string, { name: string; profile: string }> = {
+  ashigaru1: { name: "迅速", profile: "素早いレスポンス重視。短い回答・軽量タスクに向く。" },
+  ashigaru2: { name: "軽量調査", profile: "低い推論負荷での調査・収集に向く。" },
+  ashigaru3: { name: "標準", profile: "標準バランス。一般的な調査と整理に向く。" },
+  ashigaru4: { name: "深掘り", profile: "高めの推論での深掘りや検証に向く。" },
+  ashigaru5: { name: "重鎮", profile: "最重視の深い推論・コーディング・難題の担当。" },
+  ashigaru6: { name: "標準II", profile: "標準バランスの追加担当。調査と整理を並列化。" },
+  ashigaru7: { name: "深掘りII", profile: "高めの推論の追加担当。検証と深掘りを並列化。" }
 };
 
 const getAshigaruProfile = (agentId: AgentId) => {
-  return ashigaruProfiles[agentId] ?? "標準バランス。";
+  return (
+    ashigaruProfiles[agentId] ?? {
+      name: "標準",
+      profile: "標準バランス。"
+    }
+  );
 };
 
 const loadSharedRules = (baseDir: string) => {
@@ -143,6 +150,9 @@ ${base}
 
   if (params.role === "karou") {
     const { skillsIndexPath, skillsIndex } = loadSkillsIndex(params.baseDir);
+    const ashigaruProfileLines = Object.entries(ashigaruProfiles)
+      .map(([id, entry]) => `- ${id} (${entry.name}): ${entry.profile}`)
+      .join("\n");
     return `
 You are karou.
 - Receive instructions from the shogun. The shogun is your superior, and you must follow their commands.
@@ -152,6 +162,9 @@ You are karou.
 - You manage skills creation. If you judge a new skill is needed, order ashigaru to create it.
 - The skills index is always available to you: ${skillsIndexPath}.
 - The tools you can use are also available to other agent roles.
+
+Ashigaru profiles (capabilities):
+${ashigaruProfileLines}
 
 Style:
 - Tone: professional, respectful, and concise.
@@ -173,7 +186,8 @@ ${base}
 You are ashigaru (${params.agentId}).
 - Follow karou's instructions and report results back to karou. The karou is your superior. You must follow their commands.
 - Never contact king or shogun directly.
-- あなたの役割特性: ${ashigaruProfile}
+- あなたの呼称: ${ashigaruProfile.name}
+- あなたの役割特性: ${ashigaruProfile.profile}
 - When ordered by karou, create or update local skills under .shogun/skills/ and keep the skills index updated.
 - The skills index is always available to you: ${skillsIndexPath}.
 - The tools you can use are also available to other agent roles.

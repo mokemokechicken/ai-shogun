@@ -7,9 +7,12 @@
       "ashigaru2": "low",
       "ashigaru3": "medium",
       "ashigaru4": "high",
-      "ashigaru5": "xhigh"
+      "ashigaru5": "xhigh",
+      "ashigaru6": "medium",
+      "ashigaru7": "high"
     }
   },
+  "ashigaruCount": 7,
   "server": {
     "port": 4090
   }

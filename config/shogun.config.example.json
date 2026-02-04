@@ -1,5 +1,5 @@
 {
-  "ashigaruCount": 5,
+  "ashigaruCount": 7,
   "provider": "codex",
   "models": {
     "default": "gpt-5.2",
@@ -18,7 +18,9 @@
       "ashigaru2": "low",
       "ashigaru3": "medium",
       "ashigaru4": "high",
-      "ashigaru5": "xhigh"
+      "ashigaru5": "xhigh",
+      "ashigaru6": "medium",
+      "ashigaru7": "high"
     }
   },
   "server": {

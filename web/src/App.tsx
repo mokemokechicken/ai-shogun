@@ -54,6 +54,24 @@ const sortAgentIds = (ids: string[]) => {
 
 const initialVisibleAgents = new Set<string>(["shogun", "karou", "ashigaru1", "ashigaru2", "ashigaru3"]);
 
+const agentDisplayNames: Record<string, string> = {
+  shogun: "将軍",
+  karou: "家老",
+  ashigaru1: "足軽・迅速",
+  ashigaru2: "足軽・軽量調査",
+  ashigaru3: "足軽・標準",
+  ashigaru4: "足軽・深掘り",
+  ashigaru5: "足軽・重鎮",
+  ashigaru6: "足軽・標準II",
+  ashigaru7: "足軽・深掘りII"
+};
+
+const formatAgentLabel = (agentId: string) => {
+  const name = agentDisplayNames[agentId] ?? agentId;
+  if (name === agentId) return agentId;
+  return `${name} (${agentId})`;
+};
+
 export default function App() {
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -269,7 +287,7 @@ export default function App() {
           <div className="status-row">
             {agents.map((agent) => (
               <span key={agent.id} className={`status-pill ${agent.status}`}>
-                {agent.id}
+                {formatAgentLabel(agent.id)}
               </span>
             ))}
           </div>
@@ -304,9 +322,9 @@ export default function App() {
               {messages.map((message) => (
                 <div key={message.id} className="message-card">
                   <div className="message-meta">
-                    <span>{message.from}</span>
+                    <span>{formatAgentLabel(message.from)}</span>
                     <span className="arrow">→</span>
-                    <span>{message.to}</span>
+                    <span>{formatAgentLabel(message.to)}</span>
                     <span className="time">{formatTime(message.createdAt)}</span>
                   </div>
                   <p className="message-title">{message.title}</p>
@@ -339,7 +357,7 @@ export default function App() {
                     });
                   }}
                 >
-                  {agentId}
+                  {formatAgentLabel(agentId)}
                 </button>
               ))}
             </div>
@@ -352,12 +370,12 @@ export default function App() {
                 return (
                   <article key={agentId} className={`agent-tile ${status?.status ?? "idle"}`}>
                     <div className="tile-head">
-                      <h3>{agentId}</h3>
+                      <h3>{formatAgentLabel(agentId)}</h3>
                       <div className="tile-actions">
                         <button
                           type="button"
                           className="tile-action"
-                          aria-label={`${agentId}の出力を拡大表示`}
+                          aria-label={`${formatAgentLabel(agentId)}の出力を拡大表示`}
                           title="拡大表示"
                           onClick={() => setExpandedAgentId(agentId)}
                         >
@@ -407,14 +425,14 @@ export default function App() {
                 className="tile-overlay"
                 role="dialog"
                 aria-modal="true"
-                aria-label={`${expandedTile.agentId}の出力`}
+                aria-label={`${formatAgentLabel(expandedTile.agentId)}の出力`}
                 onClick={() => setExpandedAgentId(null)}
               >
                 <div className="tile-overlay__card" onClick={(event) => event.stopPropagation()}>
                   <div className="tile-overlay__head">
                     <div>
                       <p className="tile-overlay__eyebrow">エージェント出力</p>
-                      <h3>{expandedTile.agentId}</h3>
+                      <h3>{formatAgentLabel(expandedTile.agentId)}</h3>
                     </div>
                     <button
                       type="button"
