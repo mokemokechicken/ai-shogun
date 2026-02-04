@@ -12,3 +12,4 @@ pnpm-debug.log*
 .vscode/
 test-results/
 .codex/environments/
+*.tgz
