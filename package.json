@@ -21,6 +21,7 @@
     "dev": "npm --prefix server run dev",
     "dev:web": "npm --prefix web run dev",
     "dev:all": "npm --prefix server run dev & npm --prefix web run dev",
+    "dev:all:log": "SHOGUN_LOG_OUTPUT=1 npm run dev:all",
     "build": "npm --prefix shared run build && npm --prefix server run build && npm --prefix web run build",
     "prepack": "npm run bootstrap && npm run build",
     "pack": "npm pack",
