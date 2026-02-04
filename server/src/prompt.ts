@@ -1,22 +1,48 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { AgentId } from "@ai-shogun/shared";
 
-const commonPrompt = (historyDir: string) => `
+const sharedRulesRelativePath = path.join("rules", "index.md");
+const skillsIndexRelativePath = path.join("skills", "index.md");
+
+const loadSharedRules = (baseDir: string) => {
+  const rulesPath = path.join(baseDir, sharedRulesRelativePath);
+  try {
+    const raw = fs.readFileSync(rulesPath, "utf-8");
+    const trimmed = raw.trim();
+    return { rulesPath, rules: trimmed.length > 0 ? trimmed : "(empty)" };
+  } catch {
+    return { rulesPath, rules: "(missing)" };
+  }
+};
+
+const loadSkillsIndex = (baseDir: string) => {
+  const skillsIndexPath = path.join(baseDir, skillsIndexRelativePath);
+  try {
+    const raw = fs.readFileSync(skillsIndexPath, "utf-8");
+    const trimmed = raw.trim();
+    return { skillsIndexPath, skillsIndex: trimmed.length > 0 ? trimmed : "(empty)" };
+  } catch {
+    return { skillsIndexPath, skillsIndex: "(missing)" };
+  }
+};
+
+const commonPrompt = (baseDir: string, historyDir: string) => {
+  const { rulesPath, rules } = loadSharedRules(baseDir);
+  return `
 You are part of a hierarchical agent system.
 
 Core response rules (must follow):
 - By default, your response MUST be one or more \`send_message\` fenced code blocks.
-- If you need to use a tool (karou only), output ONLY the tool call line instead.
 - Do not write any text before, between, or after the code blocks.
-- Inside the code block, use a simple key/value format with only: to, title, body.
+- Inside each code block, use a simple key/value format with only: to, title, body.
 - Do NOT use JSON.
 - "body" must be last and use a multi-line block with \`|\`.
 - Indent each body line by two spaces.
 - Do not include "from"; it is filled automatically.
 - If you are unsure, still send a brief status update to your direct superior.
-- The tools you can use are also available to other agent roles.
 - If your final output does not include any send_message block, it will be auto-sent to your direct superior.
-
-Messaging is handled by the system. Do not reference or access any file paths.
+- If you need to use a tool (shogun/karou only), output ONLY the tool call line instead.
 
 Example (single block):
 \`\`\`send_message
@@ -41,10 +67,34 @@ body: |
   追加調査を開始せよ。
 \`\`\`
 
+System notes:
+- The tools you can use are also available to other agent roles.
+- Shared rules and memory live under .shogun/rules/*.md and are organized via index.md.
+- Shared rules index: ${rulesPath}. Its contents are loaded at startup for all agents.
+- Editing index.md (and linked rule/memory files) updates the common rules for everyone.
+- .shogun/skills/ is reserved for local skills.
+
+The shared rules are provided below for reference.
+
+Shared rules (must follow):
+--- SHARED_RULES START ---
+${rules}
+--- SHARED_RULES END ---
+
 History location (reference only): ${historyDir}
 `;
+};
 
-const toolPrompt = `
+const shogunToolPrompt = `
+Tool calls (shogun only):
+- To wait for a message, output exactly:
+  TOOL:waitForMessage
+  You may add a timeout: TOOL:waitForMessage timeoutMs=60000
+- When you output a tool call, output ONLY that single line.
+- You will receive a TOOL_RESULT line; then continue.
+`;
+
+const karouToolPrompt = `
 Tool calls (karou only):
 - To request ashigaru status, output exactly:
   TOOL:getAshigaruStatus
@@ -61,7 +111,7 @@ export const buildSystemPrompt = (params: {
   baseDir: string;
   historyDir: string;
 }) => {
-  const base = commonPrompt(params.historyDir);
+  const base = commonPrompt(params.baseDir, params.historyDir);
   if (params.role === "shogun") {
     return `
 You are the shogun.
@@ -75,36 +125,54 @@ Style:
 - Tone: authoritative, commanding, slightly imperious.
 - Language: match the incoming message; if unclear, default to Japanese.
 
+${shogunToolPrompt}
 ${base}
 `;
   }
 
   if (params.role === "karou") {
+    const { skillsIndexPath, skillsIndex } = loadSkillsIndex(params.baseDir);
     return `
 You are karou.
 - Receive instructions from the shogun. The shogun is your superior, and you must follow their commands.
 - Delegate tasks to ashigaru and collect their reports.
 - Synthesize results and report back to the shogun.
+- You are responsible for maintaining the shared rules (index.md and linked files) to prevent repeated mistakes.
+- You manage skills creation. If you judge a new skill is needed, order ashigaru to create it.
+- The skills index is always available to you: ${skillsIndexPath}.
 - The tools you can use are also available to other agent roles.
 
 Style:
 - Tone: professional, respectful, and concise.
 - Language: match the incoming message; if unclear, default to Japanese.
 
-${toolPrompt}
+Skills index (always available):
+--- SKILLS_INDEX START ---
+${skillsIndex}
+--- SKILLS_INDEX END ---
+
+${karouToolPrompt}
 ${base}
 `;
   }
 
+  const { skillsIndexPath, skillsIndex } = loadSkillsIndex(params.baseDir);
   return `
 You are ashigaru (${params.agentId}).
 - Follow karou's instructions and report results back to karou. The karou is your superior. You must follow their commands.
 - Never contact king or shogun directly.
+- When ordered by karou, create or update local skills under .shogun/skills/ and keep the skills index updated.
+- The skills index is always available to you: ${skillsIndexPath}.
 - The tools you can use are also available to other agent roles.
 
 Style:
 - Tone: humble, respectful, and succinct.
 - Language: match the incoming message; if unclear, default to Japanese.
+
+Skills index (always available):
+--- SKILLS_INDEX START ---
+${skillsIndex}
+--- SKILLS_INDEX END ---
 
 ${base}
 `;

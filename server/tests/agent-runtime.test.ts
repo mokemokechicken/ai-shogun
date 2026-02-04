@@ -73,6 +73,43 @@ class WaitProvider implements LlmProvider {
   }
 }
 
+class ShogunWaitProvider implements LlmProvider {
+  kind = "shogun-wait";
+  private threadId = "shogun-wait-thread";
+  private callCount = 0;
+
+  async createThread(options?: { workingDirectory: string; initialInput?: string }): Promise<ProviderThreadHandle> {
+    if (options?.initialInput) {
+      await this.sendMessage({ threadId: this.threadId, input: options.initialInput });
+    }
+    return { id: this.threadId };
+  }
+
+  resumeThread(threadId: string): ProviderThreadHandle {
+    this.threadId = threadId;
+    return { id: threadId };
+  }
+
+  async sendMessage(input: ProviderRunInput): Promise<ProviderResponse> {
+    if (input.input.includes("ACK")) {
+      return { outputText: "ACK" };
+    }
+    this.callCount += 1;
+    if (this.callCount === 1) {
+      return { outputText: "TOOL:waitForMessage timeoutMs=500" };
+    }
+    const match = input.input.match(/TOOL_RESULT waitForMessage: ([\s\S]*)/);
+    const body = match ? match[1] : "missing";
+    return {
+      outputText: `\n\n\`\`\`send_message\nto: king\ntitle: waited\nbody: |\n  ${body}\n\`\`\``
+    };
+  }
+
+  async cancel(): Promise<void> {
+    return;
+  }
+}
+
 class AutoWrapProvider implements LlmProvider {
   kind = "auto-wrap";
   private threadId = "auto-wrap-thread";
@@ -233,6 +270,61 @@ describe("agent runtime", () => {
     const payload = JSON.parse(content) as { status: string; message: { from: string; threadId: string } };
     expect(payload.status).toBe("message");
     expect(payload.message.from).toBe("ashigaru1");
+    expect(payload.message.threadId).toBe(thread.id);
+  });
+
+  it("shogun can wait for messages and return tool result", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "shogun-agent-"));
+    const stateStore = new StateStore(path.join(tempDir, "state.json"), {
+      version: 1,
+      threads: {},
+      threadOrder: []
+    });
+    const thread = stateStore.createThread("Test");
+    await stateStore.save();
+
+    const runtime = new AgentRuntime({
+      agentId: "shogun",
+      role: "shogun",
+      baseDir: tempDir,
+      historyDir: path.join(tempDir, "history"),
+      allowedRecipients: new Set(["king"]),
+      stateStore,
+      provider: new ShogunWaitProvider(),
+      workingDirectory: tempDir
+    });
+
+    setTimeout(() => {
+      runtime.enqueue({
+        id: "msg-2",
+        threadId: thread.id,
+        from: "king",
+        to: "shogun",
+        title: "follow-up",
+        body: "done",
+        createdAt: new Date().toISOString()
+      });
+    }, 100);
+
+    runtime.enqueue({
+      id: "msg-1",
+      threadId: thread.id,
+      from: "king",
+      to: "shogun",
+      title: "test",
+      body: "do it",
+      createdAt: new Date().toISOString()
+    });
+
+    const outDir = path.join(tempDir, "message_to", "king", "from", "shogun");
+    await waitForFile(outDir);
+    const entries = await fs.readdir(outDir);
+    const fileName = entries.find((entry) => entry.endsWith(".md"));
+    expect(fileName).toBeDefined();
+    const content = await fs.readFile(path.join(outDir, fileName!), "utf-8");
+    const payload = JSON.parse(content) as { status: string; message: { from: string; threadId: string } };
+    expect(payload.status).toBe("message");
+    expect(payload.message.from).toBe("king");
     expect(payload.message.threadId).toBe(thread.id);
   });
 

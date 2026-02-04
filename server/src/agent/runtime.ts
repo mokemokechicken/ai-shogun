@@ -431,16 +431,23 @@ export class AgentRuntime {
           output: logged.output
         });
       }
-      if (this.options.role === "karou") {
-        const toolRequest = parseToolRequest(output);
-        if (toolRequest?.name === "getAshigaruStatus") {
+      const toolRequest = parseToolRequest(output);
+      if (toolRequest?.name === "getAshigaruStatus") {
+        if (this.options.role !== "karou") {
+          this.options.logger?.warn("tool ignored: getAshigaruStatus not allowed", {
+            agentId: this.options.agentId,
+            threadId
+          });
+        } else {
           const status = this.options.getAshigaruStatus?.();
           const idle = status?.idle ?? [];
           const busy = status?.busy ?? [];
           input = `TOOL_RESULT getAshigaruStatus: idle=${idle.join(",")} busy=${busy.join(",")}`;
           continue;
         }
-        if (toolRequest?.name === "waitForMessage") {
+      }
+      if (toolRequest?.name === "waitForMessage") {
+        if (this.options.role === "karou" || this.options.role === "shogun") {
           const waited = await this.waitForMessage(message.threadId, toolRequest.timeoutMs);
           const payload = waited
             ? { status: "message", message: waited }
@@ -448,6 +455,10 @@ export class AgentRuntime {
           input = `TOOL_RESULT waitForMessage: ${JSON.stringify(payload)}`;
           continue;
         }
+        this.options.logger?.warn("tool ignored: waitForMessage not allowed", {
+          agentId: this.options.agentId,
+          threadId
+        });
       }
       break;
     }

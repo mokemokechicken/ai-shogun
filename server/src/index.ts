@@ -57,6 +57,46 @@ const main = async () => {
   await ensureDir(config.baseDir);
   await ensureDir(path.join(config.baseDir, "message_to"));
   await ensureDir(config.historyDir);
+  const sharedRulesDir = path.join(config.baseDir, "rules");
+  await ensureDir(sharedRulesDir);
+  const sharedRulesIndexPath = path.join(sharedRulesDir, "index.md");
+  const sharedRulesCommonPath = path.join(sharedRulesDir, "common.md");
+  let hasCommon = false;
+  try {
+    await fs.access(sharedRulesCommonPath);
+    hasCommon = true;
+  } catch {
+    hasCommon = false;
+  }
+  try {
+    await fs.access(sharedRulesIndexPath);
+  } catch {
+    const lines = [
+      "# Shared Rules Index",
+      "",
+      "- Add shared rules here or link to other files in this folder.",
+      "- Keep this index updated so all agents share the same context."
+    ];
+    if (hasCommon) {
+      lines.push("", "- [common](./common.md)");
+    }
+    await fs.writeFile(sharedRulesIndexPath, `${lines.join("\n")}\n`, "utf-8");
+  }
+
+  const sharedSkillsDir = path.join(config.baseDir, "skills");
+  await ensureDir(sharedSkillsDir);
+  const sharedSkillsIndexPath = path.join(sharedSkillsDir, "index.md");
+  try {
+    await fs.access(sharedSkillsIndexPath);
+  } catch {
+    const lines = [
+      "# Skills Index",
+      "",
+      "- List local skills here and link to skill files in this folder.",
+      "- Keep this index updated so karou/ashigaru always know available skills."
+    ];
+    await fs.writeFile(sharedSkillsIndexPath, `${lines.join("\n")}\n`, "utf-8");
+  }
 
   const stateStore = await StateStore.load(path.join(config.baseDir, "state.json"));
   const historyStore = new HistoryStore(config.historyDir);
