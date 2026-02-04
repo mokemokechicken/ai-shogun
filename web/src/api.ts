@@ -87,10 +87,16 @@ export type WsHandlers = {
   onMessage?: (message: ShogunMessage) => void;
   onAgentStatus?: (agents: AgentSnapshot[]) => void;
   onStop?: (status: WsEvent & { type: "stop" }) => void;
+  onOpen?: () => void;
+  onClose?: () => void;
+  onError?: () => void;
 };
 
 export const connectWs = (handlers: WsHandlers) => {
   const ws = new WebSocket(buildWsUrl());
+  ws.onopen = () => {
+    handlers.onOpen?.();
+  };
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data) as WsEvent;
     if (data.type === "threads") {
@@ -105,6 +111,12 @@ export const connectWs = (handlers: WsHandlers) => {
     if (data.type === "stop") {
       handlers.onStop?.(data as WsEvent & { type: "stop" });
     }
+  };
+  ws.onerror = () => {
+    handlers.onError?.();
+  };
+  ws.onclose = () => {
+    handlers.onClose?.();
   };
   return ws;
 };

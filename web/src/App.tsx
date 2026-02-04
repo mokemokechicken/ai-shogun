@@ -87,6 +87,66 @@ export default function App() {
 
   useEffect(() => {
     let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let reconnectAttempts = 0;
+    let stopped = false;
+
+    const scheduleReconnect = () => {
+      if (stopped || reconnectTimer !== null) return;
+      const backoffMs = Math.min(1000 * 2 ** reconnectAttempts, 10000);
+      const jitterMs = Math.floor(Math.random() * 300);
+      reconnectAttempts = Math.min(reconnectAttempts + 1, 6);
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        if (!stopped) {
+          connect();
+        }
+      }, backoffMs + jitterMs);
+    };
+
+    const syncOnReconnect = async () => {
+      try {
+        const [threadList, agentList] = await Promise.all([listThreads(), listAgents()]);
+        if (stopped) return;
+        setThreads(threadList);
+        setAgents(agentList);
+        if (selectedThreadRef.current) {
+          const threadMessages = await listMessages(selectedThreadRef.current);
+          if (stopped) return;
+          setMessages(threadMessages);
+          return;
+        }
+        if (threadList.length > 0) {
+          await handleSelectThread(threadList[0].id);
+        }
+      } catch {
+        // Ignore reconnect sync failures; next reconnect will retry.
+      }
+    };
+
+    const connect = () => {
+      ws = connectWs({
+        onThreads: (data) => setThreads(data),
+        onAgentStatus: (data) => setAgents(data),
+        onMessage: (message) => {
+          setMessages((prev) => {
+            if (selectedThreadRef.current && message.threadId !== selectedThreadRef.current) return prev;
+            return dedupeMessages([message, ...prev]).slice(0, 500);
+          });
+        },
+        onOpen: () => {
+          reconnectAttempts = 0;
+          void syncOnReconnect();
+        },
+        onClose: () => {
+          scheduleReconnect();
+        },
+        onError: () => {
+          // onclose will handle reconnect.
+        }
+      });
+    };
+
     const boot = async () => {
       try {
         const [threadList, agentList] = await Promise.all([listThreads(), listAgents()]);
@@ -102,22 +162,18 @@ export default function App() {
           const active = threadList[0].id;
           await handleSelectThread(active);
         }
-        ws = connectWs({
-          onThreads: (data) => setThreads(data),
-          onAgentStatus: (data) => setAgents(data),
-          onMessage: (message) => {
-            setMessages((prev) => {
-              if (selectedThreadRef.current && message.threadId !== selectedThreadRef.current) return prev;
-              return dedupeMessages([message, ...prev]).slice(0, 500);
-            });
-          }
-        });
+        connect();
       } catch (err) {
         setError(err instanceof Error ? err.message : "起動に失敗しました");
+        scheduleReconnect();
       }
     };
     void boot();
     return () => {
+      stopped = true;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
       ws?.close();
     };
   }, []);
