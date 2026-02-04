@@ -88,24 +88,32 @@ export class CodexProvider implements LlmProvider {
   private threads = new Map<string, CodexThread>();
   private model: string;
   private modelReasoningEffort?: ModelReasoningEffort;
+  private webSearchEnabled?: boolean;
 
   constructor(options: {
     model: string;
     config: Record<string, unknown>;
     env: Record<string, string>;
     modelReasoningEffort?: ModelReasoningEffort;
+    webSearchEnabled?: boolean;
   }) {
     this.model = options.model;
     this.modelReasoningEffort = options.modelReasoningEffort;
+    this.webSearchEnabled = options.webSearchEnabled;
     const env = Object.keys(options.env).length > 0 ? options.env : undefined;
     this.codex = new Codex({ config: options.config as CodexOptions["config"], env });
   }
 
   async createThread(options: { workingDirectory: string; initialInput?: string }): Promise<ProviderThreadHandle> {
+    // Guard right before createThread: minimal + web_search => upgrade to low.
+    const hasWebSearch = this.webSearchEnabled !== false;
+    const reasoningEffort =
+      this.modelReasoningEffort === "minimal" && hasWebSearch ? "low" : this.modelReasoningEffort;
     const thread = this.codex.startThread({
       workingDirectory: options.workingDirectory,
       model: this.model,
-      modelReasoningEffort: this.modelReasoningEffort
+      modelReasoningEffort: reasoningEffort,
+      webSearchEnabled: this.webSearchEnabled
     });
     if (options.initialInput) {
       await thread.run(options.initialInput);
@@ -122,7 +130,8 @@ export class CodexProvider implements LlmProvider {
     if (!this.threads.has(threadId)) {
       const thread = this.codex.resumeThread(threadId, {
         model: this.model,
-        modelReasoningEffort: this.modelReasoningEffort
+        modelReasoningEffort: this.modelReasoningEffort,
+        webSearchEnabled: this.webSearchEnabled
       });
       this.threads.set(threadId, thread as CodexThread);
     }
