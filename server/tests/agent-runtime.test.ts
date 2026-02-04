@@ -39,6 +39,39 @@ class FakeProvider implements LlmProvider {
   }
 }
 
+class JsonToolProvider implements LlmProvider {
+  kind = "json-tool";
+  private threadId = "json-tool-thread";
+
+  async createThread(options?: { workingDirectory: string; initialInput?: string }): Promise<ProviderThreadHandle> {
+    if (options?.initialInput) {
+      await this.sendMessage({ threadId: this.threadId, input: options.initialInput });
+    }
+    return { id: this.threadId };
+  }
+
+  resumeThread(threadId: string): ProviderThreadHandle {
+    this.threadId = threadId;
+    return { id: threadId };
+  }
+
+  async sendMessage(input: ProviderRunInput): Promise<ProviderResponse> {
+    if (input.input.includes("ACK")) {
+      return { outputText: "ACK" };
+    }
+    if (input.input.includes("TOOL_RESULT sendMessage")) {
+      return { outputText: "DONE" };
+    }
+    return {
+      outputText: `TOOL sendMessage {"to":["karou"],"title":"report","body":"done"}`
+    };
+  }
+
+  async cancel(): Promise<void> {
+    return;
+  }
+}
+
 class WaitProvider implements LlmProvider {
   kind = "wait";
   private threadId = "wait-thread";
@@ -284,6 +317,46 @@ describe("agent runtime", () => {
     await waitForFile(outDir);
     const entries = await fs.readdir(outDir);
     expect(entries.some((entry) => entry.endsWith(".md"))).toBe(true);
+  });
+
+  it("writes outgoing message files with JSON tool syntax", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "shogun-agent-"));
+    const stateStore = new StateStore(path.join(tempDir, "state.json"), {
+      version: 1,
+      threads: {},
+      threadOrder: []
+    });
+    const thread = stateStore.createThread("Test");
+    await stateStore.save();
+
+    const runtime = new AgentRuntime({
+      agentId: "shogun",
+      role: "shogun",
+      baseDir: tempDir,
+      historyDir: path.join(tempDir, "history"),
+      allowedRecipients: new Set(["karou"]),
+      stateStore,
+      provider: new JsonToolProvider(),
+      workingDirectory: tempDir
+    });
+
+    runtime.enqueue({
+      id: "msg-1",
+      threadId: thread.id,
+      from: "king",
+      to: "shogun",
+      title: "test",
+      body: "do it",
+      createdAt: new Date().toISOString()
+    });
+
+    const outDir = path.join(tempDir, "message_to", "karou", "from", "shogun");
+    await waitForFile(outDir);
+    const entries = await fs.readdir(outDir);
+    const fileName = entries.find((entry) => entry.endsWith(".md"));
+    expect(fileName).toBeDefined();
+    const content = await fs.readFile(path.join(outDir, fileName!), "utf-8");
+    expect(content).toBe("done");
   });
 
   it("waits for messages and returns tool result", async () => {

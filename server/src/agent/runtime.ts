@@ -11,6 +11,7 @@ import { WaitStore, type WaitRecord } from "../wait/store.js";
 const waitForMessageRegex = /^TOOL:waitForMessage(?:\s+timeoutMs=(\d+))?\s*$/;
 const interruptAgentRegex = /^TOOL:interruptAgent(?:\s+(.*))?\s*$/;
 const sendMessageToolRegex = /^TOOL:sendMessage(?:\s+(.*))?\s*$/;
+const jsonToolPrefix = "TOOL ";
 const toolArgRegex = /(\w+)=(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^\s]+))/g;
 const maxToolBodyBytes = 10 * 1024;
 
@@ -50,6 +51,19 @@ const parseRecipients = (value: string): AgentId[] => {
     .filter(Boolean) as AgentId[];
 };
 
+const parseRecipientsValue = (value: unknown): AgentId[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (typeof entry === "string" ? entry : String(entry)))
+      .map((entry) => entry.trim())
+      .filter(Boolean) as AgentId[];
+  }
+  if (typeof value === "string") {
+    return parseRecipients(value);
+  }
+  return [];
+};
+
 const resolveBodyFilePath = (
   baseDir: string,
   workingDirectory: string,
@@ -84,7 +98,73 @@ const getAutoReplyRecipient = (role: AgentRuntimeOptions["role"]) => {
 const isToolOutput = (output: string) => {
   return output
     .split("\n")
-    .some((line) => line.trim().startsWith("TOOL:"));
+    .some((line) => {
+      const trimmed = line.trim();
+      return trimmed.startsWith("TOOL:") || trimmed.startsWith(jsonToolPrefix);
+    });
+};
+
+const parseJsonToolLine = (trimmed: string): ToolRequest | null => {
+  if (!trimmed.startsWith(jsonToolPrefix) || trimmed.startsWith("TOOL:")) {
+    return null;
+  }
+  const rest = trimmed.slice(jsonToolPrefix.length).trim();
+  if (!rest) return null;
+  const firstSpace = rest.indexOf(" ");
+  const toolName = firstSpace === -1 ? rest : rest.slice(0, firstSpace);
+  const payloadRaw = firstSpace === -1 ? "" : rest.slice(firstSpace).trim();
+  if (!payloadRaw) {
+    if (toolName === "getAshigaruStatus") {
+      return { name: "getAshigaruStatus" };
+    }
+    if (toolName === "waitForMessage") {
+      return { name: "waitForMessage" };
+    }
+    return null;
+  }
+  if (!payloadRaw.startsWith("{")) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(payloadRaw);
+  } catch {
+    return null;
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const data = payload as Record<string, unknown>;
+  if (toolName === "getAshigaruStatus") {
+    return { name: "getAshigaruStatus" };
+  }
+  if (toolName === "waitForMessage") {
+    const rawTimeout = data.timeoutMs;
+    if (typeof rawTimeout === "number" && Number.isFinite(rawTimeout)) {
+      return { name: "waitForMessage", timeoutMs: Math.max(0, rawTimeout) };
+    }
+    return { name: "waitForMessage" };
+  }
+  if (toolName === "interruptAgent") {
+    const to = parseRecipientsValue(data.to);
+    if (to.length === 0) return null;
+    return {
+      name: "interruptAgent",
+      to,
+      title: typeof data.title === "string" ? data.title : undefined,
+      body: typeof data.body === "string" ? data.body : undefined
+    };
+  }
+  if (toolName === "sendMessage") {
+    const to = parseRecipientsValue(data.to);
+    if (to.length === 0) return null;
+    return {
+      name: "sendMessage",
+      to,
+      title: typeof data.title === "string" ? data.title : undefined,
+      body: typeof data.body === "string" ? data.body : undefined,
+      bodyFile: typeof data.bodyFile === "string" ? data.bodyFile : undefined
+    };
+  }
+  return null;
 };
 
 const formatMessageBatchInput = (messages: ShogunMessage[]) => {
@@ -118,6 +198,11 @@ const parseToolRequests = (output: string): ToolRequest[] => {
   for (const line of output.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+    const jsonRequest = parseJsonToolLine(trimmed);
+    if (jsonRequest) {
+      requests.push(jsonRequest);
+      continue;
+    }
     if (trimmed === "TOOL:getAshigaruStatus") {
       requests.push({ name: "getAshigaruStatus" });
       continue;
