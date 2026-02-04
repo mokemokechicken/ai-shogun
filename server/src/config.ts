@@ -96,10 +96,14 @@ export const loadConfig = async (rootDir: string): Promise<AppConfig> => {
     fileConfig.models?.default ?? process.env.SHOGUN_MODEL_DEFAULT ?? process.env.CODEX_MODEL,
     "gpt-5.2-codex"
   );
-  const additionalDirectories = (fileConfig.codex?.additionalDirectories ?? [])
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => path.resolve(rootDir, entry));
+  const additionalDirSet = new Set<string>(
+    (fileConfig.codex?.additionalDirectories ?? [])
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => path.resolve(rootDir, entry))
+  );
+  additionalDirSet.add(rootDir);
+  const additionalDirectories = Array.from(additionalDirSet);
 
   return {
     rootDir,
