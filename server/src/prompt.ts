@@ -60,7 +60,7 @@ Core response rules (must follow):
 - Do not include "from"; it is filled automatically.
 - If you are unsure, still send a brief status update to your direct superior.
 - If your final output does not include any send_message block, it will be auto-sent to your direct superior.
-- If you need to use a tool (shogun/karou only), output ONLY the tool call line instead.
+- If you need to use a tool (shogun/karou only), output ONLY tool call line(s) instead.
 
 Example (single block):
 \`\`\`send_message
@@ -108,8 +108,15 @@ Tool calls (shogun only):
 - To wait for a message, output exactly:
   TOOL:waitForMessage
   You may add a timeout: TOOL:waitForMessage timeoutMs=60000
-- When you output a tool call, output ONLY that single line.
-- You will receive a TOOL_RESULT line; then continue.
+- To interrupt your direct subordinate (karou), output exactly one line:
+  TOOL:interruptAgent to=karou
+- To interrupt with a message, add title/body (quote values with spaces):
+  TOOL:interruptAgent to=karou title="interrupt" body="中断して新指示を待て"
+- If you need line breaks in body, use \\n inside the quoted value.
+- You may output multiple TOOL lines; each must be its own line and nothing else.
+- When you output tool calls, output ONLY tool lines (no other text).
+- When multiple TOOL lines are emitted, you will receive TOOL_RESULT batch: [...]; then continue.
+- When a single tool is emitted, you will receive a TOOL_RESULT line; then continue.
 `;
 
 const karouToolPrompt = `
@@ -119,8 +126,15 @@ Tool calls (karou only):
 - To wait for a message, output exactly:
   TOOL:waitForMessage
   You may add a timeout: TOOL:waitForMessage timeoutMs=60000
-- When you output a tool call, output ONLY that single line.
-- You will receive a TOOL_RESULT line; then continue.
+- To interrupt your direct subordinate (ashigaru), output exactly one line:
+  TOOL:interruptAgent to=ashigaru3
+- To interrupt with a message, add title/body (quote values with spaces):
+  TOOL:interruptAgent to=ashigaru3 title="interrupt" body="今の作業を中断し、この指示に切り替えよ"
+- If you need line breaks in body, use \\n inside the quoted value.
+- You may output multiple TOOL lines; each must be its own line and nothing else.
+- When you output tool calls, output ONLY tool lines (no other text).
+- When multiple TOOL lines are emitted, you will receive TOOL_RESULT batch: [...]; then continue.
+- When a single tool is emitted, you will receive a TOOL_RESULT line; then continue.
 `;
 
 export const buildSystemPrompt = (params: {

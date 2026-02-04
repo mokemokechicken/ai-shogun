@@ -7,6 +7,37 @@ import type { Logger } from "../logger.js";
 
 const sendMessageRegex = /```send_message\s*([\s\S]*?)```/g;
 const waitForMessageRegex = /^TOOL:waitForMessage(?:\s+timeoutMs=(\d+))?\s*$/;
+const interruptAgentRegex = /^TOOL:interruptAgent(?:\s+(.*))?\s*$/;
+const toolArgRegex = /(\w+)=(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^\s]+))/g;
+
+const unescapeToolValue = (value: string) => {
+  return value
+    .replace(/\\\\/g, "\\")
+    .replace(/\\n/g, "\n")
+    .replace(/\\"/g, "\"")
+    .replace(/\\'/g, "'");
+};
+
+const parseToolArgs = (raw: string | undefined) => {
+  const args: Record<string, string> = {};
+  if (!raw) return args;
+  let match: RegExpExecArray | null;
+  toolArgRegex.lastIndex = 0;
+  while ((match = toolArgRegex.exec(raw))) {
+    const key = match[1];
+    const quoted = match[2] ?? match[3] ?? null;
+    const bare = match[4] ?? null;
+    const value = quoted !== null ? unescapeToolValue(quoted) : bare ?? "";
+    args[key] = value;
+  }
+  return args;
+};
+
+const isDirectSubordinate = (role: AgentRuntimeOptions["role"], target: AgentId) => {
+  if (role === "shogun") return target === "karou";
+  if (role === "karou") return target.startsWith("ashigaru");
+  return false;
+};
 const defaultWaitTimeoutMs = 60_000;
 const maxLoggedOutputChars = 4000;
 const activityLogLimit = 40;
@@ -107,25 +138,44 @@ const parseSendMessages = (
 
 type ToolRequest =
   | { name: "getAshigaruStatus" }
-  | { name: "waitForMessage"; timeoutMs?: number };
+  | { name: "waitForMessage"; timeoutMs?: number }
+  | { name: "interruptAgent"; to: AgentId; title?: string; body?: string };
 
-const parseToolRequest = (output: string): ToolRequest | null => {
+const parseToolRequests = (output: string): ToolRequest[] => {
+  const requests: ToolRequest[] = [];
   for (const line of output.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     if (trimmed === "TOOL:getAshigaruStatus") {
-      return { name: "getAshigaruStatus" };
+      requests.push({ name: "getAshigaruStatus" });
+      continue;
+    }
+    const interruptMatch = trimmed.match(interruptAgentRegex);
+    if (interruptMatch) {
+      const args = parseToolArgs(interruptMatch[1]);
+      const to = args.to?.trim();
+      if (to) {
+        requests.push({
+          name: "interruptAgent",
+          to: to as AgentId,
+          title: args.title,
+          body: args.body
+        });
+      }
+      continue;
     }
     const waitMatch = trimmed.match(waitForMessageRegex);
     if (waitMatch) {
       const timeoutMs = waitMatch[1] ? Number(waitMatch[1]) : undefined;
       if (Number.isFinite(timeoutMs) && timeoutMs !== undefined) {
-        return { name: "waitForMessage", timeoutMs: Math.max(0, timeoutMs) };
+        requests.push({ name: "waitForMessage", timeoutMs: Math.max(0, timeoutMs) });
+      } else {
+        requests.push({ name: "waitForMessage" });
       }
-      return { name: "waitForMessage" };
+      continue;
     }
   }
-  return null;
+  return requests;
 };
 
 const shouldLogOutput = () => process.env.SHOGUN_LOG_OUTPUT === "1";
@@ -148,6 +198,7 @@ export interface AgentRuntimeOptions {
   workingDirectory: string;
   onStatusChange?: () => void;
   getAshigaruStatus?: () => { idle: AgentId[]; busy: AgentId[] };
+  interruptAgent?: (to: AgentId, reason: "stop" | "interrupt") => void;
   logger?: Logger;
 }
 
@@ -161,6 +212,7 @@ export class AgentRuntime {
   private activityTimer: NodeJS.Timeout | null = null;
   private activityLog: Array<{ ts: string; label: string; detail?: string }> = [];
   private abortController: AbortController | null = null;
+  private abortReason: "stop" | "interrupt" | null = null;
   private stopRequested = false;
   private messageWaiter: {
     threadId: string;
@@ -211,6 +263,7 @@ export class AgentRuntime {
     this.queue = [];
     this.resolveMessageWaiter(null);
     if (this.abortController) {
+      this.abortReason = "stop";
       this.abortController.abort();
     }
     this.clearActivityTimer();
@@ -322,6 +375,17 @@ export class AgentRuntime {
       }
       this.messageWaiter = waiter;
     });
+  }
+
+  interrupt(reason: "stop" | "interrupt") {
+    this.queue = [];
+    this.resolveMessageWaiter(null);
+    if (this.abortController) {
+      this.abortReason = reason;
+      this.abortController.abort();
+    }
+    this.recordActivity(reason === "interrupt" ? "割り込み停止" : "停止");
+    this.touchStatus();
   }
 
   private async ensureSession(threadId: string) {
@@ -445,6 +509,7 @@ export class AgentRuntime {
       this.abortController = null;
       this.activeThreadId = undefined;
       this.setBusy(false);
+      this.abortReason = null;
       const shouldContinue = !this.stopRequested;
       if (this.stopRequested) {
         this.stopRequested = false;
@@ -476,6 +541,17 @@ export class AgentRuntime {
           abortSignal: this.abortController?.signal,
           onProgress: (update) => this.handleProgress(update)
         });
+      } catch (error) {
+        if (this.abortReason) {
+          this.options.logger?.info("agent run aborted", {
+            agentId: this.options.agentId,
+            threadId,
+            reason: this.abortReason
+          });
+          this.setActivity(this.abortReason === "interrupt" ? "割り込み停止" : "停止");
+          break;
+        }
+        throw error;
       } finally {
         stopHeartbeat();
       }
@@ -499,40 +575,120 @@ export class AgentRuntime {
           output: logged.output
         });
       }
-      const toolRequest = parseToolRequest(output);
-      if (toolRequest?.name === "getAshigaruStatus") {
-        if (this.options.role !== "karou") {
-          this.options.logger?.warn("tool ignored: getAshigaruStatus not allowed", {
-            agentId: this.options.agentId,
-            threadId
-          });
-        } else {
-          this.setActivity("アシガル状況取得中");
-          const status = this.options.getAshigaruStatus?.();
-          const idle = status?.idle ?? [];
-          const busy = status?.busy ?? [];
-          input = `TOOL_RESULT getAshigaruStatus: idle=${idle.join(",")} busy=${busy.join(",")}`;
-          this.setActivity("アシガル状況取得完了");
-          continue;
+      const toolRequests = parseToolRequests(output);
+      if (toolRequests.length > 0) {
+        const results: Array<Record<string, unknown>> = [];
+        let waitEncountered = false;
+        for (const toolRequest of toolRequests) {
+          if (waitEncountered) {
+            this.options.logger?.warn("tool ignored: tool after waitForMessage", {
+              agentId: this.options.agentId,
+              threadId,
+              tool: toolRequest.name
+            });
+            continue;
+          }
+          if (toolRequest.name === "getAshigaruStatus") {
+            if (this.options.role !== "karou") {
+              this.options.logger?.warn("tool ignored: getAshigaruStatus not allowed", {
+                agentId: this.options.agentId,
+                threadId
+              });
+              results.push({ tool: "getAshigaruStatus", status: "ignored" });
+              continue;
+            }
+            this.setActivity("アシガル状況取得中");
+            const status = this.options.getAshigaruStatus?.();
+            const idle = status?.idle ?? [];
+            const busy = status?.busy ?? [];
+            this.setActivity("アシガル状況取得完了");
+            results.push({ tool: "getAshigaruStatus", status: "ok", idle, busy });
+            continue;
+          }
+          if (toolRequest.name === "waitForMessage") {
+            if (this.options.role !== "karou" && this.options.role !== "shogun") {
+              this.options.logger?.warn("tool ignored: waitForMessage not allowed", {
+                agentId: this.options.agentId,
+                threadId
+              });
+              results.push({ tool: "waitForMessage", status: "ignored" });
+              continue;
+            }
+            const waitStartedAt = Date.now();
+            const stopWaitHeartbeat = this.startActivityHeartbeat("メッセージ待機中", waitStartedAt);
+            const waited = await this.waitForMessage(message.threadId, toolRequest.timeoutMs);
+            stopWaitHeartbeat();
+            const timeoutMs = toolRequest.timeoutMs ?? defaultWaitTimeoutMs;
+            const payload = waited
+              ? { status: "message", message: waited }
+              : { status: "timeout", timeoutMs };
+            this.setActivity(waited ? "メッセージ受信" : "待機タイムアウト");
+            results.push({ tool: "waitForMessage", ...payload });
+            waitEncountered = true;
+            continue;
+          }
+          if (toolRequest.name === "interruptAgent") {
+            const target = toolRequest.to;
+            if (!isDirectSubordinate(this.options.role, target)) {
+              this.options.logger?.warn("tool ignored: interruptAgent not allowed", {
+                agentId: this.options.agentId,
+                threadId,
+                target
+              });
+              results.push({ tool: "interruptAgent", status: "ignored", to: target });
+              continue;
+            }
+            const rawBody = toolRequest.body ?? "";
+            const body = rawBody.trim();
+            const title = toolRequest.title?.trim() || `interrupt: ${message.title}`;
+            const hasBody = body.length > 0;
+            this.options.interruptAgent?.(target, hasBody ? "interrupt" : "stop");
+            if (hasBody) {
+              await writeMessageFile({
+                baseDir: this.options.baseDir,
+                threadId: message.threadId,
+                from: this.options.agentId,
+                to: target,
+                title,
+                body
+              });
+              this.setActivity("割り込み指示送信");
+            } else {
+              this.setActivity("停止指示送信");
+            }
+            results.push({ tool: "interruptAgent", status: hasBody ? "interrupted" : "stopped", to: target });
+          }
         }
-      }
-      if (toolRequest?.name === "waitForMessage") {
-        if (this.options.role === "karou" || this.options.role === "shogun") {
-          const waitStartedAt = Date.now();
-          const stopWaitHeartbeat = this.startActivityHeartbeat("メッセージ待機中", waitStartedAt);
-          const waited = await this.waitForMessage(message.threadId, toolRequest.timeoutMs);
-          stopWaitHeartbeat();
-          const payload = waited
-            ? { status: "message", message: waited }
-            : { status: "timeout", timeoutMs: toolRequest.timeoutMs ?? defaultWaitTimeoutMs };
-          input = `TOOL_RESULT waitForMessage: ${JSON.stringify(payload)}`;
-          this.setActivity(waited ? "メッセージ受信" : "待機タイムアウト");
-          continue;
+
+        if (toolRequests.length === 1) {
+          const single = toolRequests[0];
+          const singleResult = results[0] ?? null;
+          if (single?.name === "getAshigaruStatus" && singleResult?.status === "ok") {
+            const idle = (singleResult.idle as AgentId[] | undefined) ?? [];
+            const busy = (singleResult.busy as AgentId[] | undefined) ?? [];
+            input = `TOOL_RESULT getAshigaruStatus: idle=${idle.join(",")} busy=${busy.join(",")}`;
+            continue;
+          }
+          if (single?.name === "waitForMessage" && singleResult) {
+            const payload =
+              singleResult.status === "message"
+                ? { status: "message", message: singleResult.message }
+                : { status: "timeout", timeoutMs: singleResult.timeoutMs ?? defaultWaitTimeoutMs };
+            input = `TOOL_RESULT waitForMessage: ${JSON.stringify(payload)}`;
+            continue;
+          }
+          if (single?.name === "interruptAgent" && singleResult) {
+            input = `TOOL_RESULT interruptAgent: ${JSON.stringify({
+              status: singleResult.status,
+              to: singleResult.to
+            })}`;
+            continue;
+          }
         }
-        this.options.logger?.warn("tool ignored: waitForMessage not allowed", {
-          agentId: this.options.agentId,
-          threadId
-        });
+
+        input = `TOOL_RESULT batch: ${JSON.stringify(results)}`;
+        this.setActivity("ツール実行完了");
+        continue;
       }
       break;
     }

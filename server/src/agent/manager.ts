@@ -72,6 +72,7 @@ export class AgentManager {
         workingDirectory: this.config.rootDir,
         onStatusChange: () => this.notifyStatus(),
         getAshigaruStatus: () => this.getAshigaruStatus(),
+        interruptAgent: (to, reason) => this.interruptAgent(to, reason),
         logger: this.logger
       });
       this.runtimes.set(agent.id, runtime);
@@ -159,6 +160,15 @@ export class AgentManager {
     for (const runtime of this.runtimes.values()) {
       runtime.stop();
     }
+  }
+
+  interruptAgent(to: AgentId, reason: "stop" | "interrupt") {
+    const runtime = this.runtimes.get(to);
+    if (!runtime) {
+      this.logger?.warn("interruptAgent dropped: runtime missing", { to, reason });
+      return;
+    }
+    runtime.interrupt(reason);
   }
 
   getStatuses(): AgentSnapshot[] {
