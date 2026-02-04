@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import http from "node:http";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { WebSocketServer } from "ws";
 import type { ThreadInfo, WsEvent, ShogunMessage } from "@ai-shogun/shared";
@@ -29,8 +30,26 @@ const broadcast = (wss: WebSocketServer, event: WsEvent) => {
   }
 };
 
+const resolveWorkspaceDir = () => {
+  const envRoot = process.env.SHOGUN_ROOT?.trim();
+  if (envRoot) {
+    return path.resolve(envRoot);
+  }
+  const npmInitCwd = process.env.INIT_CWD?.trim();
+  if (npmInitCwd) {
+    return path.resolve(npmInitCwd);
+  }
+  return process.cwd();
+};
+
+const resolveAppDir = () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, "..", "..");
+};
+
 const main = async () => {
-  const rootDir = process.cwd();
+  const rootDir = resolveWorkspaceDir();
+  const appDir = resolveAppDir();
   const config = await loadConfig(rootDir);
   const logger = createLogger(config.baseDir, "server");
   registerProcessHandlers(logger);
@@ -51,10 +70,6 @@ const main = async () => {
     ashigaruCount: config.ashigaruCount,
     port: config.server.port
   });
-
-  for (const thread of stateStore.listThreads()) {
-    await agentManager.initThread(thread.id);
-  }
 
   const app = express();
   app.use(express.json());
@@ -112,7 +127,6 @@ const main = async () => {
   app.post("/api/threads", async (req, res) => {
     const title = typeof req.body?.title === "string" ? req.body.title : `Thread ${stateStore.listThreads().length + 1}`;
     const thread = stateStore.createThread(title);
-    await agentManager.initThread(thread.id);
     await stateStore.save();
     broadcast(wss, { type: "threads", threads: stateStore.listThreads().map(toThreadInfo) });
     res.json(toThreadInfo(thread));
@@ -173,7 +187,7 @@ const main = async () => {
     res.json({ ok: true });
   });
 
-  const staticDir = path.join(config.rootDir, "web", "dist");
+  const staticDir = path.join(appDir, "web", "dist");
   try {
     const stat = await fs.stat(staticDir);
     if (stat.isDirectory()) {

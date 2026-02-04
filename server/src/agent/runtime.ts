@@ -79,6 +79,7 @@ export class AgentRuntime {
   private queue: ShogunMessage[] = [];
   private busy = false;
   private activeThreadId: string | undefined;
+  private statusUpdatedAt = new Date().toISOString();
   private abortController: AbortController | null = null;
   private stopRequested = false;
   private messageWaiter: {
@@ -89,6 +90,11 @@ export class AgentRuntime {
 
   constructor(options: AgentRuntimeOptions) {
     this.options = options;
+  }
+
+  private touchStatus() {
+    this.statusUpdatedAt = new Date().toISOString();
+    this.options.onStatusChange?.();
   }
 
   enqueue(message: ShogunMessage) {
@@ -102,6 +108,7 @@ export class AgentRuntime {
       title: message.title,
       queueSize: this.queue.length
     });
+    this.touchStatus();
     void this.processQueue();
   }
 
@@ -111,7 +118,8 @@ export class AgentRuntime {
       role: this.options.role,
       status: this.busy ? "busy" : "idle",
       queueSize: this.queue.length,
-      activeThreadId: this.activeThreadId
+      activeThreadId: this.activeThreadId,
+      updatedAt: this.statusUpdatedAt
     };
   }
 
@@ -122,11 +130,12 @@ export class AgentRuntime {
     if (this.abortController) {
       this.abortController.abort();
     }
+    this.touchStatus();
   }
 
   private setBusy(value: boolean) {
     this.busy = value;
-    this.options.onStatusChange?.();
+    this.touchStatus();
   }
 
   private resolveMessageWaiter(message: ShogunMessage | null) {
@@ -143,6 +152,7 @@ export class AgentRuntime {
     if (!this.messageWaiter) return false;
     if (message.threadId !== this.messageWaiter.threadId) return false;
     this.resolveMessageWaiter(message);
+    this.touchStatus();
     return true;
   }
 
@@ -150,6 +160,7 @@ export class AgentRuntime {
     const index = this.queue.findIndex((entry) => entry.threadId === threadId);
     if (index === -1) return null;
     const [message] = this.queue.splice(index, 1);
+    this.touchStatus();
     return message ?? null;
   }
 
@@ -225,13 +236,12 @@ export class AgentRuntime {
     if (this.stopRequested) {
       this.stopRequested = false;
     }
-    this.setBusy(true);
     const message = this.queue.shift();
     if (!message) {
-      this.setBusy(false);
       return;
     }
     this.activeThreadId = message.threadId;
+    this.setBusy(true);
     try {
       this.options.logger?.info("agent message processing started", {
         agentId: this.options.agentId,

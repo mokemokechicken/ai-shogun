@@ -5,13 +5,13 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "postCreateCommand": "npm install && npm --prefix shared install && npm --prefix server install && npm --prefix web install && npm install -g @openai/codex",
-  "forwardPorts": [5173, 5178],
+  "forwardPorts": [4091, 4090],
   "portsAttributes": {
-    "5173": {
+    "4091": {
       "label": "web (Vite)",
       "onAutoForward": "openBrowser"
     },
-    "5178": {
+    "4090": {
       "label": "server",
       "onAutoForward": "notify"
     }

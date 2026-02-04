@@ -104,7 +104,7 @@ export const loadConfig = async (rootDir: string): Promise<AppConfig> => {
       }
     },
     server: {
-      port: fileConfig.server?.port ?? parseEnvNumber(process.env.SHOGUN_PORT, 5178)
+      port: fileConfig.server?.port ?? parseEnvNumber(process.env.SHOGUN_PORT, 4090)
     }
   };
 };

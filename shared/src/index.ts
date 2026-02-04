@@ -26,6 +26,7 @@ export interface AgentSnapshot {
   status: AgentStatus;
   queueSize: number;
   activeThreadId?: string;
+  updatedAt?: string;
 }
 
 export type WsEvent =

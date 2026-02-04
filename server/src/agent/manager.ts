@@ -96,6 +96,7 @@ export class AgentManager {
     }
   }
 
+  // Optional prewarm hook (not used in lazy-init flow).
   async initThread(threadId: string) {
     const thread = this.stateStore.getThread(threadId);
     if (!thread) return;
@@ -145,7 +146,6 @@ export class AgentManager {
     for (const runtime of this.runtimes.values()) {
       runtime.stop();
     }
-    this.notifyStatus();
   }
 
   getStatuses(): AgentSnapshot[] {

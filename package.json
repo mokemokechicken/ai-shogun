@@ -1,13 +1,53 @@
 {
-  "name": "ai-shogun",
-  "private": true,
+  "name": "@mokemokechicken/ai-shogun",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Codex-powered multi-agent workspace runner with web UI",
   "type": "module",
+  "bin": {
+    "ai-shogun": "bin/ai-shogun.js"
+  },
+  "files": [
+    "bin/",
+    "server/dist/",
+    "shared/dist/",
+    "web/dist/",
+    "config/shogun.config.example.json",
+    "README.md"
+  ],
   "scripts": {
+    "start": "node bin/ai-shogun.js",
+    "bootstrap": "npm install && npm --prefix shared install && npm --prefix server install && npm --prefix web install",
     "dev": "npm --prefix server run dev",
     "dev:web": "npm --prefix web run dev",
+    "dev:all": "npm --prefix server run dev & npm --prefix web run dev",
     "build": "npm --prefix shared run build && npm --prefix server run build && npm --prefix web run build",
+    "prepack": "npm run bootstrap && npm run build",
+    "pack": "npm pack",
     "lint": "npm --prefix shared run lint && npm --prefix server run lint && npm --prefix web run lint",
     "test": "npm --prefix shared run test && npm --prefix server run test && npm --prefix web run test"
+  },
+  "keywords": [
+    "codex",
+    "agents",
+    "cli",
+    "web"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mokemokechicken/ai-shogun.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "^0.94.0",
+    "chokidar": "^4.0.3",
+    "express": "^4.19.2",
+    "nanoid": "^5.0.7",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.19.0",

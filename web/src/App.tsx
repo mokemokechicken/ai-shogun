@@ -39,9 +39,11 @@ export default function App() {
   const [agents, setAgents] = useState<AgentSnapshot[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [creatingThread, setCreatingThread] = useState(false);
   const [visibleAgents, setVisibleAgents] = useState<Set<string>>(initialVisibleAgents);
   const [error, setError] = useState<string | null>(null);
   const selectedThreadRef = useRef<string | null>(null);
+  const creatingThreadRef = useRef(false);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -75,18 +77,40 @@ export default function App() {
   }, []);
 
   const handleSelectThread = async (threadId: string) => {
-    setSelectedThreadId(threadId);
-    selectedThreadRef.current = threadId;
-    await selectThread(threadId);
-    const threadMessages = await listMessages(threadId);
-    setMessages(threadMessages);
+    try {
+      await selectThread(threadId);
+      const threadMessages = await listMessages(threadId);
+      setSelectedThreadId(threadId);
+      selectedThreadRef.current = threadId;
+      setMessages(threadMessages);
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "スレッド選択に失敗しました");
+      return false;
+    }
   };
 
   const handleCreateThread = async () => {
-    const title = `Thread ${threads.length + 1}`;
-    const newThread = await createThread(title);
-    setThreads((prev) => [newThread, ...prev]);
-    await handleSelectThread(newThread.id);
+    if (creatingThreadRef.current) return;
+    creatingThreadRef.current = true;
+    setCreatingThread(true);
+    setError(null);
+    let newThread: ThreadInfo | null = null;
+    try {
+      const title = `Thread ${threads.length + 1}`;
+      newThread = await createThread(title);
+      setThreads((prev) => [newThread, ...prev]);
+      await handleSelectThread(newThread.id);
+    } catch (err) {
+      if (newThread) {
+        setError(err instanceof Error ? err.message : "スレッド選択に失敗しました");
+      } else {
+        setError(err instanceof Error ? err.message : "スレッド作成に失敗しました");
+      }
+    } finally {
+      creatingThreadRef.current = false;
+      setCreatingThread(false);
+    }
   };
 
   const handleSend = async () => {
@@ -118,6 +142,14 @@ export default function App() {
     return unique.sort();
   }, [agents]);
 
+  const agentById = useMemo(() => {
+    return new Map(agents.map((agent) => [agent.id, agent]));
+  }, [agents]);
+
+  const threadTitleById = useMemo(() => {
+    return new Map(threads.map((thread) => [thread.id, thread.title]));
+  }, [threads]);
+
   const messagesByAgent = useMemo(() => {
     const byAgent = new Map<string, ShogunMessage>();
     for (const message of messages) {
@@ -128,6 +160,22 @@ export default function App() {
     return byAgent;
   }, [messages]);
 
+  const agentTiles = useMemo(() => {
+    return visibleAgentList
+      .filter((agentId) => visibleAgents.has(agentId))
+      .map((agentId) => {
+        const status = agentById.get(agentId);
+        const message = messagesByAgent.get(agentId);
+        return { agentId, status, message };
+      });
+  }, [visibleAgentList, visibleAgents, agentById, messagesByAgent]);
+
+  const formatActiveThread = (threadId?: string) => {
+    if (!threadId) return "待機中";
+    if (threadId === selectedThreadId) return "このスレッド";
+    return threadTitleById.get(threadId) ?? threadId;
+  };
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -135,8 +183,8 @@ export default function App() {
           <p className="brand__title">AI Shogun</p>
           <p className="brand__subtitle">Command Center</p>
         </div>
-        <button className="primary" type="button" onClick={handleCreateThread}>
-          + 新規スレッド
+        <button className="primary" type="button" onClick={handleCreateThread} disabled={creatingThread}>
+          {creatingThread ? "作成中..." : "+ 新規スレッド"}
         </button>
         <div className="thread-list">
           {threads.map((thread) => (
@@ -244,18 +292,33 @@ export default function App() {
               ))}
             </div>
             <div className="tile-grid">
-              {Array.from(messagesByAgent.entries())
-                .filter(([agentId]) => visibleAgents.has(agentId))
-                .map(([agentId, message]) => (
-                  <article key={agentId} className="agent-tile">
+              {agentTiles.map(({ agentId, status, message }) => {
+                const stateLabel = status?.status === "busy" ? "稼働中" : "待機中";
+                const queueSize = status?.queueSize ?? 0;
+                const statusUpdatedAt = status?.updatedAt ? formatTime(status.updatedAt) : "-";
+                return (
+                  <article key={agentId} className={`agent-tile ${status?.status ?? "idle"}`}>
                     <div className="tile-head">
                       <h3>{agentId}</h3>
-                      <span className="tile-time">{formatTime(message.createdAt)}</span>
+                      <span className={`status-badge ${status?.status ?? "idle"}`}>{stateLabel}</span>
                     </div>
-                    <p className="tile-title">{message.title}</p>
-                    <pre className="tile-body">{message.body}</pre>
+                    <div className="tile-meta">
+                      <span>キュー: {queueSize}</span>
+                      <span>作業: {formatActiveThread(status?.activeThreadId)}</span>
+                      <span>更新: {statusUpdatedAt}</span>
+                      <span>出力(選択中): {message ? formatTime(message.createdAt) : "-"}</span>
+                    </div>
+                    {message ? (
+                      <>
+                        <p className="tile-title">{message.title}</p>
+                        <pre className="tile-body">{message.body}</pre>
+                      </>
+                    ) : (
+                      <p className="tile-placeholder">選択中スレッドの出力はまだありません。</p>
+                    )}
                   </article>
-                ))}
+                );
+              })}
             </div>
           </div>
         </section>
