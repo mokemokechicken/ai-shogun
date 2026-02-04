@@ -153,6 +153,9 @@ const childEnv = {
   SHOGUN_WEB_PORT: String(webPort)
 };
 
+// Keep in sync with server/src/restart/watcher.ts
+const RESTART_EXIT_CODE = 75;
+
 const children = [];
 let shuttingDown = false;
 
@@ -163,6 +166,14 @@ const spawnChild = (label, cmd, cmdArgs, extraEnv) => {
     env: { ...childEnv, ...extraEnv }
   });
   child.on("exit", (code, signal) => {
+    const index = children.indexOf(child);
+    if (index !== -1) {
+      children.splice(index, 1);
+    }
+    if (label === "server" && code === RESTART_EXIT_CODE && !shuttingDown) {
+      spawnChild(label, cmd, cmdArgs, extraEnv);
+      return;
+    }
     if (shuttingDown) return;
     shuttingDown = true;
     for (const other of children) {
