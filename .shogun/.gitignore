@@ -1,6 +1,10 @@
 # Runtime data (generated)
-logs/
 history/
+logs/
+message_processing/
 message_to/
 state.json
 tmp/
+waits/
+message_ledger.json
+*.bak

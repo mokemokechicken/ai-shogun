@@ -8,7 +8,6 @@ yarn-error.log*
 pnpm-debug.log*
 .env
 .env.*
-.shogun/
 .venv/
 .vscode/
 test-results/

@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Shogun Dev Server Restart"
+  short_description: "Restart npm dev server with PID tracking"
+  default_prompt: "Use $ai-shogun-dev-server-restart to restart the ai-shogun dev server and manage its PID."
