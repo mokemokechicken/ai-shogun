@@ -2,13 +2,14 @@ import type { AgentId, AgentSnapshot, ShogunMessage } from "@ai-shogun/shared";
 import { buildSystemPrompt } from "../prompt.js";
 import { writeMessageFile } from "../message/writer.js";
 import type { StateStore } from "../state/store.js";
-import type { LlmProvider } from "../provider/types.js";
+import type { LlmProvider, ProviderProgressUpdate, ProviderResponse } from "../provider/types.js";
 import type { Logger } from "../logger.js";
 
 const sendMessageRegex = /```send_message\s*([\s\S]*?)```/g;
 const waitForMessageRegex = /^TOOL:waitForMessage(?:\s+timeoutMs=(\d+))?\s*$/;
 const defaultWaitTimeoutMs = 60_000;
 const maxLoggedOutputChars = 4000;
+const activityLogLimit = 40;
 const maxLoggedSendMessageChars = 800;
 
 const parseSendMessageBlock = (raw: string) => {
@@ -156,6 +157,9 @@ export class AgentRuntime {
   private busy = false;
   private activeThreadId: string | undefined;
   private statusUpdatedAt = new Date().toISOString();
+  private activity: { label: string; updatedAt: string } | null = null;
+  private activityTimer: NodeJS.Timeout | null = null;
+  private activityLog: Array<{ ts: string; label: string; detail?: string }> = [];
   private abortController: AbortController | null = null;
   private stopRequested = false;
   private messageWaiter: {
@@ -195,7 +199,10 @@ export class AgentRuntime {
       status: this.busy ? "busy" : "idle",
       queueSize: this.queue.length,
       activeThreadId: this.activeThreadId,
-      updatedAt: this.statusUpdatedAt
+      updatedAt: this.statusUpdatedAt,
+      activity: this.activity?.label,
+      activityUpdatedAt: this.activity?.updatedAt,
+      activityLog: this.activityLog.length > 0 ? [...this.activityLog] : undefined
     };
   }
 
@@ -206,12 +213,64 @@ export class AgentRuntime {
     if (this.abortController) {
       this.abortController.abort();
     }
+    this.clearActivityTimer();
+    this.setActivity(null);
     this.touchStatus();
   }
 
   private setBusy(value: boolean) {
     this.busy = value;
+    if (!value) {
+      this.clearActivityTimer();
+      this.setActivity(null);
+    }
     this.touchStatus();
+  }
+
+  private setActivity(label: string | null) {
+    if (label) {
+      this.activity = { label, updatedAt: new Date().toISOString() };
+    } else {
+      this.activity = null;
+    }
+    this.touchStatus();
+  }
+
+  private recordActivity(label: string, detail?: string) {
+    const ts = new Date().toISOString();
+    const combined = detail ? `${label}: ${detail}` : label;
+    this.activity = { label: combined, updatedAt: ts };
+    this.activityLog = [{ ts, label, detail }, ...this.activityLog].slice(0, activityLogLimit);
+    this.touchStatus();
+  }
+
+  private handleProgress(update: ProviderProgressUpdate) {
+    const combined = update.detail ? `${update.label}: ${update.detail}` : update.label;
+    if (update.log === false) {
+      this.setActivity(combined);
+      return;
+    }
+    this.recordActivity(update.label, update.detail);
+  }
+
+  private clearActivityTimer() {
+    if (this.activityTimer) {
+      clearInterval(this.activityTimer);
+      this.activityTimer = null;
+    }
+  }
+
+  private startActivityHeartbeat(label: string, startedAt: number, intervalMs = 2000) {
+    this.clearActivityTimer();
+    const update = () => {
+      const elapsedSec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      this.setActivity(`${label} (${elapsedSec}s)`);
+    };
+    update();
+    this.activityTimer = setInterval(update, intervalMs);
+    return () => {
+      this.clearActivityTimer();
+    };
   }
 
   private resolveMessageWaiter(message: ShogunMessage | null) {
@@ -318,6 +377,7 @@ export class AgentRuntime {
     }
     this.activeThreadId = message.threadId;
     this.setBusy(true);
+    this.setActivity(`指示処理開始: ${message.title}`);
     try {
       this.options.logger?.info("agent message processing started", {
         agentId: this.options.agentId,
@@ -402,18 +462,26 @@ export class AgentRuntime {
     for (let i = 0; i < maxLoops; i += 1) {
       if (this.stopRequested) break;
       const startedAt = Date.now();
+      const stopHeartbeat = this.startActivityHeartbeat(`LLM応答待ち L${i + 1}/${maxLoops}`, startedAt);
       this.options.logger?.info("provider sendMessage start", {
         agentId: this.options.agentId,
         threadId,
         loop: i + 1
       });
-      const result = await this.options.provider.sendMessage({
-        threadId,
-        input,
-        abortSignal: this.abortController?.signal
-      });
+      let result: ProviderResponse;
+      try {
+        result = await this.options.provider.sendMessage({
+          threadId,
+          input,
+          abortSignal: this.abortController?.signal,
+          onProgress: (update) => this.handleProgress(update)
+        });
+      } finally {
+        stopHeartbeat();
+      }
       const durationMs = Date.now() - startedAt;
       output = result.outputText ?? "";
+      this.setActivity(`LLM応答受信 (${output.length} chars)`);
       this.options.logger?.info("provider sendMessage complete", {
         agentId: this.options.agentId,
         threadId,
@@ -439,20 +507,26 @@ export class AgentRuntime {
             threadId
           });
         } else {
+          this.setActivity("アシガル状況取得中");
           const status = this.options.getAshigaruStatus?.();
           const idle = status?.idle ?? [];
           const busy = status?.busy ?? [];
           input = `TOOL_RESULT getAshigaruStatus: idle=${idle.join(",")} busy=${busy.join(",")}`;
+          this.setActivity("アシガル状況取得完了");
           continue;
         }
       }
       if (toolRequest?.name === "waitForMessage") {
         if (this.options.role === "karou" || this.options.role === "shogun") {
+          const waitStartedAt = Date.now();
+          const stopWaitHeartbeat = this.startActivityHeartbeat("メッセージ待機中", waitStartedAt);
           const waited = await this.waitForMessage(message.threadId, toolRequest.timeoutMs);
+          stopWaitHeartbeat();
           const payload = waited
             ? { status: "message", message: waited }
             : { status: "timeout", timeoutMs: toolRequest.timeoutMs ?? defaultWaitTimeoutMs };
           input = `TOOL_RESULT waitForMessage: ${JSON.stringify(payload)}`;
+          this.setActivity(waited ? "メッセージ受信" : "待機タイムアウト");
           continue;
         }
         this.options.logger?.warn("tool ignored: waitForMessage not allowed", {

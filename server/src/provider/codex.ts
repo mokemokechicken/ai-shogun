@@ -1,10 +1,85 @@
-import { Codex, type CodexOptions } from "@openai/codex-sdk";
-import type { LlmProvider, ProviderRunInput, ProviderResponse, ProviderThreadHandle } from "./types.js";
+import {
+  Codex,
+  type CodexOptions,
+  type ThreadEvent,
+  type ThreadItem,
+  type Usage
+} from "@openai/codex-sdk";
+import type {
+  LlmProvider,
+  ProviderProgressUpdate,
+  ProviderRunInput,
+  ProviderResponse,
+  ProviderThreadHandle
+} from "./types.js";
 
 interface CodexThread {
   id: string | null;
   run: (_input: string, _options?: { signal?: AbortSignal }) => Promise<{ finalResponse?: string }>;
+  runStreamed: (_input: string, _options?: { signal?: AbortSignal }) => Promise<{ events: AsyncGenerator<ThreadEvent> }>;
 }
+
+const truncate = (value: string, max = 120) => {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…`;
+};
+
+const summarizeItem = (item: ThreadItem): { label: string; detail?: string } => {
+  switch (item.type) {
+    case "agent_message":
+      return { label: "応答生成", detail: `${item.text.length} chars` };
+    case "reasoning":
+      return { label: "推論", detail: truncate(item.text) };
+    case "command_execution":
+      return { label: "コマンド実行", detail: truncate(item.command) };
+    case "file_change": {
+      const changes = item.changes.map((change) => `${change.kind}:${change.path}`).join(", ");
+      return { label: "ファイル変更", detail: truncate(changes) };
+    }
+    case "mcp_tool_call":
+      return { label: "MCPツール", detail: `${item.server}:${item.tool}` };
+    case "web_search":
+      return { label: "Web検索", detail: truncate(item.query) };
+    case "todo_list":
+      return { label: "ToDo更新", detail: `${item.items.length} items` };
+    case "error":
+      return { label: "エラー項目", detail: truncate(item.message) };
+    default:
+      return { label: "項目", detail: "unknown" };
+  }
+};
+
+const describeEvent = (event: ThreadEvent): ProviderProgressUpdate => {
+  switch (event.type) {
+    case "thread.started":
+      return { label: "スレッド開始", detail: event.thread_id, kind: event.type, log: true };
+    case "turn.started":
+      return { label: "ターン開始", kind: event.type, log: true };
+    case "turn.completed": {
+      const usage = event.usage;
+      const detail = usage
+        ? `in:${usage.input_tokens} out:${usage.output_tokens} cache:${usage.cached_input_tokens}`
+        : undefined;
+      return { label: "ターン完了", detail, kind: event.type, log: true };
+    }
+    case "turn.failed":
+      return { label: "ターン失敗", detail: event.error.message, kind: event.type, log: true };
+    case "item.started": {
+      const summary = summarizeItem(event.item);
+      return { label: `${summary.label} 開始`, detail: summary.detail, kind: event.type, log: true };
+    }
+    case "item.updated": {
+      const summary = summarizeItem(event.item);
+      return { label: `${summary.label} 更新`, detail: summary.detail, kind: event.type, log: false };
+    }
+    case "item.completed": {
+      const summary = summarizeItem(event.item);
+      return { label: `${summary.label} 完了`, detail: summary.detail, kind: event.type, log: true };
+    }
+    case "error":
+      return { label: "ストリームエラー", detail: event.message, kind: event.type, log: true };
+  }
+};
 
 export class CodexProvider implements LlmProvider {
   kind = "codex";
@@ -44,10 +119,34 @@ export class CodexProvider implements LlmProvider {
     if (!thread) {
       throw new Error(`Thread not found: ${input.threadId}`);
     }
-    const result = await thread.run(input.input, { signal: input.abortSignal });
+    const { events } = await thread.runStreamed(input.input, { signal: input.abortSignal });
+    const items: ThreadItem[] = [];
+    let finalResponse = "";
+    let usage: Usage | null = null;
+    let turnFailure: string | null = null;
+
+    for await (const event of events) {
+      input.onProgress?.(describeEvent(event));
+      if (event.type === "item.completed") {
+        items.push(event.item);
+        if (event.item.type === "agent_message") {
+          finalResponse = event.item.text;
+        }
+      } else if (event.type === "turn.completed") {
+        usage = event.usage;
+      } else if (event.type === "turn.failed") {
+        turnFailure = event.error.message;
+        break;
+      }
+    }
+
+    if (turnFailure) {
+      throw new Error(turnFailure);
+    }
+
     return {
-      outputText: result.finalResponse ?? "",
-      raw: result
+      outputText: finalResponse,
+      raw: { items, usage }
     };
   }
 

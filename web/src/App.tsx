@@ -161,6 +161,11 @@ export default function App() {
         threadId = newThread.id;
       }
       await sendKingMessage(threadId, draft.trim());
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      if (selectedThreadRef.current === threadId) {
+        const threadMessages = await listMessages(threadId);
+        setMessages(threadMessages);
+      }
       setDraft("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "送信に失敗しました");
@@ -343,6 +348,7 @@ export default function App() {
                 const stateLabel = status?.status === "busy" ? "稼働中" : "待機中";
                 const queueSize = status?.queueSize ?? 0;
                 const statusUpdatedAt = status?.updatedAt ? formatTime(status.updatedAt) : "-";
+                const latestActivity = status?.activityLog?.[0];
                 return (
                   <article key={agentId} className={`agent-tile ${status?.status ?? "idle"}`}>
                     <div className="tile-head">
@@ -372,6 +378,7 @@ export default function App() {
                     <div className="tile-meta">
                       <span>キュー: {queueSize}</span>
                       <span>作業: {formatActiveThread(status?.activeThreadId)}</span>
+                      <span>進行中: {status?.activity ?? "-"}</span>
                       <span>更新: {statusUpdatedAt}</span>
                       <span>出力(選択中): {message ? formatTime(message.createdAt) : "-"}</span>
                     </div>
@@ -380,6 +387,14 @@ export default function App() {
                         <p className="tile-title">{message.title}</p>
                         <pre className="tile-body">{message.body}</pre>
                       </>
+                    ) : latestActivity ? (
+                      <div className="tile-activity">
+                        <span className="tile-activity__time">{formatTime(latestActivity.ts)}</span>
+                        <span className="tile-activity__label">{latestActivity.label}</span>
+                        {latestActivity.detail && (
+                          <span className="tile-activity__detail">{latestActivity.detail}</span>
+                        )}
+                      </div>
                     ) : (
                       <p className="tile-placeholder">選択中スレッドの出力はまだありません。</p>
                     )}
@@ -415,11 +430,30 @@ export default function App() {
                     <span>状態: {expandedTile.status?.status === "busy" ? "稼働中" : "待機中"}</span>
                     <span>キュー: {expandedTile.status?.queueSize ?? 0}</span>
                     <span>作業: {formatActiveThread(expandedTile.status?.activeThreadId)}</span>
+                    <span>進行中: {expandedTile.status?.activity ?? "-"}</span>
                     <span>更新: {expandedTile.status?.updatedAt ? formatTime(expandedTile.status.updatedAt) : "-"}</span>
                     <span>
                       出力(選択中):{" "}
                       {expandedTile.message ? formatTime(expandedTile.message.createdAt) : "-"}
                     </span>
+                  </div>
+                  <div className="activity-log">
+                    <p className="activity-log__title">進行履歴</p>
+                    {expandedTile.status?.activityLog?.length ? (
+                      <div className="activity-log__list">
+                        {expandedTile.status.activityLog.map((entry, index) => (
+                          <div key={`${entry.ts}-${index}`} className="activity-log__row">
+                            <span className="activity-log__time">{formatTime(entry.ts)}</span>
+                            <span className="activity-log__label">{entry.label}</span>
+                            {entry.detail && (
+                              <span className="activity-log__detail">{entry.detail}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="activity-log__empty">履歴はまだありません。</p>
+                    )}
                   </div>
                   {expandedTile.message ? (
                     <>
