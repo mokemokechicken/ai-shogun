@@ -30,6 +30,28 @@ const dedupeMessages = (items: ShogunMessage[]) => {
   });
 };
 
+const sortAgentIds = (ids: string[]) => {
+  const baseOrder = new Map<string, number>([
+    ["shogun", 0],
+    ["karou", 1]
+  ]);
+  const score = (id: string) => {
+    const base = baseOrder.get(id);
+    if (base !== undefined) return base;
+    const match = id.match(/^ashigaru(\d+)$/);
+    if (match) {
+      const num = Number(match[1]);
+      if (Number.isFinite(num)) return 2 + Math.max(0, num - 1);
+    }
+    return Number.MAX_SAFE_INTEGER;
+  };
+  return [...ids].sort((a, b) => {
+    const diff = score(a) - score(b);
+    if (diff !== 0) return diff;
+    return a.localeCompare(b);
+  });
+};
+
 const initialVisibleAgents = new Set<string>(["shogun", "karou", "ashigaru1", "ashigaru2", "ashigaru3"]);
 
 export default function App() {
@@ -99,7 +121,12 @@ export default function App() {
     try {
       const title = `Thread ${threads.length + 1}`;
       newThread = await createThread(title);
-      setThreads((prev) => [newThread, ...prev]);
+      setThreads((prev) => {
+        if (prev.some((thread) => thread.id === newThread!.id)) {
+          return prev;
+        }
+        return [newThread!, ...prev];
+      });
       await handleSelectThread(newThread.id);
     } catch (err) {
       if (newThread) {
@@ -114,11 +141,25 @@ export default function App() {
   };
 
   const handleSend = async () => {
-    if (!selectedThreadId || !draft.trim()) return;
+    if (!draft.trim()) return;
     setSending(true);
     setError(null);
     try {
-      await sendKingMessage(selectedThreadId, draft.trim());
+      let threadId = selectedThreadId;
+      if (!threadId) {
+        const title = `Thread ${threads.length + 1}`;
+        const newThread = await createThread(title);
+        setThreads((prev) => {
+          if (prev.some((thread) => thread.id === newThread.id)) {
+            return prev;
+          }
+          return [newThread, ...prev];
+        });
+        const selected = await handleSelectThread(newThread.id);
+        if (!selected) return;
+        threadId = newThread.id;
+      }
+      await sendKingMessage(threadId, draft.trim());
       setDraft("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "送信に失敗しました");
@@ -139,7 +180,7 @@ export default function App() {
   const visibleAgentList = useMemo(() => {
     const ids = agents.map((agent) => agent.id);
     const unique = Array.from(new Set(ids));
-    return unique.sort();
+    return sortAgentIds(unique);
   }, [agents]);
 
   const agentById = useMemo(() => {

@@ -27,7 +27,7 @@ class FakeProvider implements LlmProvider {
       return { outputText: "ACK" };
     }
     return {
-      outputText: `\n\n\`\`\`send_message\n{"to":"karou","title":"report","body":"done"}\n\`\`\``
+      outputText: `\n\n\`\`\`send_message\nto: karou\ntitle: report\nbody: |\n  done\n\`\`\``
     };
   }
 
@@ -63,8 +63,9 @@ class WaitProvider implements LlmProvider {
     }
     const match = input.input.match(/TOOL_RESULT waitForMessage: ([\s\S]*)/);
     const body = match ? match[1] : "missing";
-    const payload = JSON.stringify({ to: "shogun", title: "waited", body });
-    return { outputText: `\n\n\`\`\`send_message\n${payload}\n\`\`\`` };
+    return {
+      outputText: `\n\n\`\`\`send_message\nto: shogun\ntitle: waited\nbody: |\n  ${body}\n\`\`\``
+    };
   }
 
   async cancel(): Promise<void> {

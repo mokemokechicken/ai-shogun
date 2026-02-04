@@ -10,19 +10,84 @@ const waitForMessageRegex = /^TOOL:waitForMessage(?:\s+timeoutMs=(\d+))?\s*$/;
 const defaultWaitTimeoutMs = 60_000;
 const maxLoggedOutputChars = 4000;
 
-const parseSendMessages = (output: string) => {
+const parseSendMessageBlock = (raw: string) => {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const lines = trimmed.split(/\r?\n/);
+  let to: string | undefined;
+  let title: string | undefined;
+  let body: string | undefined;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const match = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(.*)$/);
+    if (!match) continue;
+    const key = match[1];
+    const value = match[2] ?? "";
+    if (key === "to") {
+      to = value.trim();
+      continue;
+    }
+    if (key === "title") {
+      title = value.trim();
+      continue;
+    }
+    if (key === "body") {
+      const marker = value.trim();
+      if (marker && !marker.startsWith("|")) {
+        body = value;
+      } else {
+        const rest = lines.slice(i + 1);
+        let indent = "";
+        for (const restLine of rest) {
+          if (!restLine.trim()) continue;
+          const indentMatch = restLine.match(/^[ \t]+/);
+          indent = indentMatch ? indentMatch[0] : "";
+          break;
+        }
+        if (indent) {
+          body = rest
+            .map((restLine) => (restLine.startsWith(indent) ? restLine.slice(indent.length) : restLine))
+            .join("\n");
+        } else {
+          body = rest.join("\n");
+        }
+      }
+      break;
+    }
+  }
+
+  if (to && title && typeof body === "string") {
+    return { to, title, body };
+  }
+  return null;
+};
+
+const maxLoggedSendMessageChars = 800;
+
+const parseSendMessages = (
+  output: string,
+  logger?: Logger,
+  meta?: { agentId?: AgentId; threadId?: string }
+) => {
   const messages: Array<{ to: string; title: string; body: string }> = [];
   let match: RegExpExecArray | null;
   sendMessageRegex.lastIndex = 0;
   while ((match = sendMessageRegex.exec(output))) {
-    const raw = match[1].trim();
-    try {
-      const parsed = JSON.parse(raw) as { to: string; title: string; body: string };
-      if (parsed?.to && parsed?.title && typeof parsed.body === "string") {
-        messages.push({ to: parsed.to, title: parsed.title, body: parsed.body });
-      }
-    } catch {
-      // ignore malformed blocks
+    const block = match[1];
+    const parsed = parseSendMessageBlock(block);
+    if (parsed) {
+      messages.push(parsed);
+    } else {
+      const preview =
+        block.length <= maxLoggedSendMessageChars ? block : block.slice(0, maxLoggedSendMessageChars);
+      logger?.warn("send_message parse failed", {
+        ...meta,
+        truncated: block.length > maxLoggedSendMessageChars,
+        output: preview
+      });
     }
   }
   return messages;
@@ -253,7 +318,10 @@ export class AgentRuntime {
       const sessionThreadId = await this.ensureSession(message.threadId);
       this.abortController = new AbortController();
       const output = await this.runWithTools(sessionThreadId, message);
-      const outbound = parseSendMessages(output);
+      const outbound = parseSendMessages(output, this.options.logger, {
+        agentId: this.options.agentId,
+        threadId: message.threadId
+      });
       for (const entry of outbound) {
         if (!this.options.allowedRecipients.has(entry.to)) {
           continue;

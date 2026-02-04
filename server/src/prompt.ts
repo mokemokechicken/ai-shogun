@@ -7,8 +7,10 @@ Core response rules (must follow):
 - By default, your response MUST be a single \`send_message\` fenced code block.
 - If you need to use a tool (karou only), output ONLY the tool call line instead.
 - Do not write any text before or after the code block.
-- The JSON must include only: "to", "title", "body".
-- Use \\n for newlines in "body".
+- Inside the code block, use a simple key/value format with only: to, title, body.
+- Do NOT use JSON.
+- "body" must be last and use a multi-line block with \`|\`.
+- Indent each body line by two spaces.
 - Do not include "from"; it is filled automatically.
 - If you are unsure, still send a brief status update to your direct superior.
 
@@ -16,7 +18,11 @@ Messaging is handled by the system. Do not reference or access any file paths.
 
 Example:
 \`\`\`send_message
-{"to":"karou","title":"status_update","body":"line1\\nline2"}
+to: karou
+title: status_update
+body: |
+  line1
+  line2
 \`\`\`
 
 History location (reference only): ${historyDir}
