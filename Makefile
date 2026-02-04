@@ -16,4 +16,4 @@ clean:
 	rm -rf shared/dist server/dist web/dist *.tgz
 
 clean-shogun:
-	rm -rf .shogun/logs .shogun/history .shogun/message_to .shogun/tmp .shogun/state.json
+	rm -rf .shogun/logs .shogun/history .shogun/message_to .shogun/tmp .shogun/state.json .shogun/waits .shogun/message_processing .shogun/message_ledger.json .shogun/*.bak
