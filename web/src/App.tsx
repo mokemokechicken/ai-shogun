@@ -3,6 +3,7 @@ import type { AgentSnapshot, ShogunMessage, ThreadInfo } from "@ai-shogun/shared
 import {
   connectWs,
   createThread,
+  fetchUiConfig,
   listAgents,
   listMessages,
   listThreads,
@@ -54,9 +55,12 @@ const sortAgentIds = (ids: string[]) => {
 
 const initialVisibleAgents = new Set<string>(["shogun", "karou", "ashigaru1", "ashigaru2", "ashigaru3"]);
 
-const agentDisplayNames: Record<string, string> = {
+const baseAgentDisplayNames: Record<string, string> = {
   shogun: "将軍",
-  karou: "家老",
+  karou: "家老"
+};
+
+const defaultAshigaruDisplayNames: Record<string, string> = {
   ashigaru1: "足軽・迅速",
   ashigaru2: "足軽・軽量調査",
   ashigaru3: "足軽・標準",
@@ -66,17 +70,12 @@ const agentDisplayNames: Record<string, string> = {
   ashigaru7: "足軽・深掘りII"
 };
 
-const formatAgentLabel = (agentId: string) => {
-  const name = agentDisplayNames[agentId] ?? agentId;
-  if (name === agentId) return agentId;
-  return `${name} (${agentId})`;
-};
-
 export default function App() {
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ShogunMessage[]>([]);
   const [agents, setAgents] = useState<AgentSnapshot[]>([]);
+  const [ashigaruProfiles, setAshigaruProfiles] = useState<Record<string, { name: string; profile: string }>>({});
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [creatingThread, setCreatingThread] = useState(false);
@@ -93,6 +92,12 @@ export default function App() {
         const [threadList, agentList] = await Promise.all([listThreads(), listAgents()]);
         setThreads(threadList);
         setAgents(agentList);
+        try {
+          const uiConfig = await fetchUiConfig();
+          setAshigaruProfiles(uiConfig.ashigaruProfiles ?? {});
+        } catch {
+          // Ignore config fetch failures and use defaults.
+        }
         if (threadList.length > 0) {
           const active = threadList[0].id;
           await handleSelectThread(active);
@@ -116,6 +121,26 @@ export default function App() {
       ws?.close();
     };
   }, []);
+
+  const agentDisplayNames = useMemo(() => {
+    const fromConfig: Record<string, string> = {};
+    for (const [id, entry] of Object.entries(ashigaruProfiles)) {
+      if (!id.startsWith("ashigaru")) continue;
+      if (!entry?.name) continue;
+      fromConfig[id] = `足軽・${entry.name}`;
+    }
+    return {
+      ...defaultAshigaruDisplayNames,
+      ...fromConfig,
+      ...baseAgentDisplayNames
+    };
+  }, [ashigaruProfiles]);
+
+  const formatAgentLabel = (agentId: string) => {
+    const name = agentDisplayNames[agentId] ?? agentId;
+    if (name === agentId) return agentId;
+    return `${name} (${agentId})`;
+  };
 
   const handleSelectThread = async (threadId: string) => {
     try {

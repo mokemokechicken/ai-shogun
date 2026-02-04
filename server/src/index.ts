@@ -228,6 +228,10 @@ const main = async () => {
     res.json({ agents: agentManager.getStatuses() });
   });
 
+  app.get("/api/config", (_req, res) => {
+    res.json({ ashigaruProfiles: config.ashigaruProfiles ?? {} });
+  });
+
   app.post("/api/stop", (_req, res) => {
     broadcast(wss, { type: "stop", status: "requested" });
     agentManager.stopAll();

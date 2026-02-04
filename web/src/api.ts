@@ -70,6 +70,18 @@ export const listAgents = async (): Promise<AgentSnapshot[]> => {
   return data.agents;
 };
 
+export type UiConfig = {
+  ashigaruProfiles?: Record<string, { name: string; profile: string }>;
+};
+
+export const fetchUiConfig = async (): Promise<UiConfig> => {
+  const res = await fetch(`${apiBase}/api/config`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch config");
+  }
+  return (await res.json()) as UiConfig;
+};
+
 export type WsHandlers = {
   onThreads?: (threads: ThreadInfo[]) => void;
   onMessage?: (message: ShogunMessage) => void;
