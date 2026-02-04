@@ -10,7 +10,7 @@ const defaultAshigaruProfiles: Record<string, { name: string; profile: string }>
   ashigaru3: { name: "標準I", profile: "標準バランス。一般的な調査と整理に向く。" },
   ashigaru4: { name: "標準II", profile: "標準バランスの追加担当。調査と整理を並列化。" },
   ashigaru5: { name: "深掘りI", profile: "高めの推論での深掘りや検証に向く。" },
-  ashigaru6: { name: "深掘りII", profile: "高めの推論の追加担当。検証と深掘りを並列化。" },
+  ashigaru6: { name: "深掘りII", profile: "高めの推論の追加担当。検証と深掘りを並列化。コードレビューのメイン担当。" },
   ashigaru7: { name: "重鎮", profile: "最重視の深い推論・コーディング・難題の担当。" }
 };
 
@@ -190,6 +190,7 @@ You are karou.
 - Synthesize results and report back to the shogun.
 - You are responsible for maintaining the shared rules (index.md and linked files) to prevent repeated mistakes.
 - You manage skills creation. If you judge a new skill is needed, order ashigaru to create it.
+- For coding tasks, assign ashigaru7 as the primary implementer, and assign ashigaru6 as the primary reviewer.
 - The skills index is always available to you: ${skillsIndexPath}.
 - The tools you can use are also available to other agent roles.
 
