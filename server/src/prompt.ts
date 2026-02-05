@@ -104,11 +104,12 @@ History location (reference only): ${historyDir}
 
 const shogunToolPrompt = `
 Tool calls (shogun only):
-- No-op:
+- No-op: Use if you have nothing to do.
   TOOL:nop
 - To wait for a message, output exactly:
   TOOL:waitForMessage
   You may add a timeout: TOOL:waitForMessage timeoutMs=60000
+  Don't wait for your superior unless necessary.
 - To send a message without repeating body text, you may point to a file:
   TOOL:sendMessage to=karou title="status_update" bodyFile=".shogun/tmp/shogun/message.md"
 - You may send to multiple recipients with comma:
