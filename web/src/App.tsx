@@ -6,12 +6,11 @@ import {
   deleteThread,
   fetchUiConfig,
   listAgents,
-  listMessages,
   listThreads,
-  selectThread,
   sendKingMessage,
   stopAllAgents
 } from "./api";
+import { useThreadSelection } from "./hooks/useThreadSelection";
 
 const formatTime = (iso: string) =>
   new Date(iso).toLocaleString("ja-JP", {
@@ -73,8 +72,6 @@ const defaultAshigaruDisplayNames: Record<string, string> = {
 
 export default function App() {
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ShogunMessage[]>([]);
   const [agents, setAgents] = useState<AgentSnapshot[]>([]);
   const [ashigaruProfiles, setAshigaruProfiles] = useState<Record<string, { name: string; profile: string }>>({});
   const [draft, setDraft] = useState("");
@@ -84,10 +81,19 @@ export default function App() {
   const [visibleAgents, setVisibleAgents] = useState<Set<string>>(initialVisibleAgents);
   const [error, setError] = useState<string | null>(null);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
-  const selectedThreadRef = useRef<string | null>(null);
-  const selectionTokenRef = useRef(0);
-  const pendingSelectionRef = useRef<string | null>(null);
   const creatingThreadRef = useRef(false);
+  const {
+    selectedThreadId,
+    messages,
+    setMessages,
+    selectedThreadRef,
+    selectThread: handleSelectThread,
+    ensureValidSelection,
+    refreshMessages,
+    syncSelectionOnReconnect
+  } = useThreadSelection({
+    onError: (message) => setError(message)
+  });
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -114,18 +120,7 @@ export default function App() {
         if (stopped) return;
         setThreads(threadList);
         setAgents(agentList);
-        const currentId = pendingSelectionRef.current ?? selectedThreadRef.current;
-        if (currentId && threadList.some((thread) => thread.id === currentId) && !pendingSelectionRef.current) {
-          const token = selectionTokenRef.current;
-          const threadMessages = await listMessages(currentId);
-          if (stopped) return;
-          if (selectionTokenRef.current !== token || pendingSelectionRef.current) {
-            return;
-          }
-          setMessages(threadMessages);
-          return;
-        }
-        await ensureValidSelection(threadList);
+        await syncSelectionOnReconnect(threadList);
       } catch {
         // Ignore reconnect sync failures; next reconnect will retry.
       }
@@ -208,50 +203,6 @@ export default function App() {
     return `${name} (${agentId})`;
   };
 
-  const clearSelection = () => {
-    selectionTokenRef.current += 1;
-    pendingSelectionRef.current = null;
-    setSelectedThreadId(null);
-    selectedThreadRef.current = null;
-    setMessages([]);
-  };
-
-  const handleSelectThread = async (threadId: string) => {
-    const token = selectionTokenRef.current + 1;
-    selectionTokenRef.current = token;
-    pendingSelectionRef.current = threadId;
-    try {
-      await selectThread(threadId);
-      if (selectionTokenRef.current !== token) {
-        return false;
-      }
-      const threadMessages = await listMessages(threadId);
-      if (selectionTokenRef.current !== token) {
-        return false;
-      }
-      setSelectedThreadId(threadId);
-      selectedThreadRef.current = threadId;
-      setMessages(threadMessages);
-      pendingSelectionRef.current = null;
-      return true;
-    } catch (err) {
-      if (selectionTokenRef.current === token) {
-        pendingSelectionRef.current = null;
-        setError(err instanceof Error ? err.message : "スレッド選択に失敗しました");
-      }
-      return false;
-    }
-  };
-
-  const ensureValidSelection = async (nextThreads: ThreadInfo[]) => {
-    const currentId = pendingSelectionRef.current ?? selectedThreadRef.current;
-    if (currentId && nextThreads.some((thread) => thread.id === currentId)) return;
-    clearSelection();
-    if (nextThreads.length > 0) {
-      await handleSelectThread(nextThreads[0].id);
-    }
-  };
-
   const handleCreateThread = async () => {
     if (creatingThreadRef.current) return;
     creatingThreadRef.current = true;
@@ -318,8 +269,7 @@ export default function App() {
       await sendKingMessage(threadId, draft.trim());
       await new Promise((resolve) => setTimeout(resolve, 200));
       if (selectedThreadRef.current === threadId) {
-        const threadMessages = await listMessages(threadId);
-        setMessages(threadMessages);
+        await refreshMessages(threadId);
       }
       setDraft("");
     } catch (err) {

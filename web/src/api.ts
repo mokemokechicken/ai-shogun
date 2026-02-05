@@ -2,6 +2,43 @@ import type { AgentSnapshot, ShogunMessage, ThreadInfo, WsEvent } from "@ai-shog
 
 const apiBase = import.meta.env.VITE_API_URL ?? window.location.origin;
 
+type ApiErrorPayload = {
+  error?: string;
+  message?: string;
+};
+
+const buildErrorMessage = async (res: Response, fallback: string) => {
+  try {
+    const data = (await res.json()) as ApiErrorPayload;
+    if (typeof data?.error === "string" && data.error.trim()) {
+      return data.error;
+    }
+    if (typeof data?.message === "string" && data.message.trim()) {
+      return data.message;
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return `${fallback} (HTTP ${res.status})`;
+};
+
+const request = async (path: string, options: RequestInit, fallbackError: string) => {
+  const res = await fetch(`${apiBase}${path}`, options);
+  if (!res.ok) {
+    throw new Error(await buildErrorMessage(res, fallbackError));
+  }
+  return res;
+};
+
+const requestJson = async <T>(path: string, options: RequestInit, fallbackError: string): Promise<T> => {
+  const res = await request(path, options, fallbackError);
+  return (await res.json()) as T;
+};
+
+const requestOk = async (path: string, options: RequestInit, fallbackError: string): Promise<void> => {
+  await request(path, options, fallbackError);
+};
+
 export const buildWsUrl = () => {
   if (apiBase.startsWith("https")) {
     return apiBase.replace("https", "wss") + "/ws";
@@ -10,70 +47,65 @@ export const buildWsUrl = () => {
 };
 
 export const listThreads = async (): Promise<ThreadInfo[]> => {
-  const res = await fetch(`${apiBase}/api/threads`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch threads");
-  }
-  const data = (await res.json()) as { threads: ThreadInfo[] };
+  const data = await requestJson<{ threads: ThreadInfo[] }>(
+    "/api/threads",
+    { method: "GET" },
+    "Failed to fetch threads"
+  );
   return data.threads;
 };
 
 export const createThread = async (title?: string): Promise<ThreadInfo> => {
-  const res = await fetch(`${apiBase}/api/threads`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title })
-  });
-  if (!res.ok) {
-    throw new Error("Failed to create thread");
-  }
-  return (await res.json()) as ThreadInfo;
+  return await requestJson<ThreadInfo>(
+    "/api/threads",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title })
+    },
+    "Failed to create thread"
+  );
 };
 
 export const selectThread = async (threadId: string): Promise<void> => {
-  await fetch(`${apiBase}/api/threads/${threadId}/select`, { method: "POST" });
+  await requestOk(`/api/threads/${threadId}/select`, { method: "POST" }, "Failed to select thread");
 };
 
 export const deleteThread = async (threadId: string): Promise<void> => {
-  const res = await fetch(`${apiBase}/api/threads/${threadId}`, { method: "DELETE" });
-  if (!res.ok) {
-    throw new Error("Failed to delete thread");
-  }
+  await requestOk(`/api/threads/${threadId}`, { method: "DELETE" }, "Failed to delete thread");
 };
 
 export const listMessages = async (threadId: string): Promise<ShogunMessage[]> => {
-  const res = await fetch(`${apiBase}/api/threads/${threadId}/messages`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch messages");
-  }
-  const data = (await res.json()) as { messages: ShogunMessage[] };
+  const data = await requestJson<{ messages: ShogunMessage[] }>(
+    `/api/threads/${threadId}/messages`,
+    { method: "GET" },
+    "Failed to fetch messages"
+  );
   return data.messages;
 };
 
 export const sendKingMessage = async (threadId: string, body: string, title?: string) => {
-  const res = await fetch(`${apiBase}/api/threads/${threadId}/king-message`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ body, title })
-  });
-  if (!res.ok) {
-    throw new Error("Failed to send message");
-  }
+  await requestOk(
+    `/api/threads/${threadId}/king-message`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body, title })
+    },
+    "Failed to send message"
+  );
 };
 
 export const stopAllAgents = async () => {
-  const res = await fetch(`${apiBase}/api/stop`, { method: "POST" });
-  if (!res.ok) {
-    throw new Error("Failed to stop agents");
-  }
+  await requestOk("/api/stop", { method: "POST" }, "Failed to stop agents");
 };
 
 export const listAgents = async (): Promise<AgentSnapshot[]> => {
-  const res = await fetch(`${apiBase}/api/agents`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch agents");
-  }
-  const data = (await res.json()) as { agents: AgentSnapshot[] };
+  const data = await requestJson<{ agents: AgentSnapshot[] }>(
+    "/api/agents",
+    { method: "GET" },
+    "Failed to fetch agents"
+  );
   return data.agents;
 };
 
@@ -82,11 +114,7 @@ export type UiConfig = {
 };
 
 export const fetchUiConfig = async (): Promise<UiConfig> => {
-  const res = await fetch(`${apiBase}/api/config`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch config");
-  }
-  return (await res.json()) as UiConfig;
+  return await requestJson<UiConfig>("/api/config", { method: "GET" }, "Failed to fetch config");
 };
 
 export type WsHandlers = {
