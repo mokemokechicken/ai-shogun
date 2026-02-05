@@ -54,6 +54,17 @@ const main = async () => {
   const config = await loadConfig(rootDir);
   const logger = createLogger(config.baseDir, "server");
   registerProcessHandlers(logger);
+  logger.info("process identity", {
+    uid: typeof process.getuid === "function" ? process.getuid() : null,
+    euid: typeof process.geteuid === "function" ? process.geteuid() : null,
+    gid: typeof process.getgid === "function" ? process.getgid() : null,
+    egid: typeof process.getegid === "function" ? process.getegid() : null,
+    user: process.env.USER ?? null,
+    home: process.env.HOME ?? null,
+    codexHome: process.env.CODEX_HOME ?? null,
+    shogunRoot: process.env.SHOGUN_ROOT ?? null,
+    cwd: process.cwd()
+  });
 
   await ensureDir(config.baseDir);
   await ensureDir(path.join(config.baseDir, "config"));
