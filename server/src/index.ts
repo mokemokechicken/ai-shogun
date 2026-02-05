@@ -54,6 +54,7 @@ const main = async () => {
   const config = await loadConfig(rootDir);
   const logger = createLogger(config.baseDir, "server");
   registerProcessHandlers(logger);
+  logger.info("We are SHOGUN system!");
   logger.info("process identity", {
     uid: typeof process.getuid === "function" ? process.getuid() : null,
     euid: typeof process.geteuid === "function" ? process.geteuid() : null,
