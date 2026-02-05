@@ -5,5 +5,9 @@
 例:
 
 - `rg -n 'level=(error|warn)'`
-- `rg -n '\"level\":\"(error|warn)\"'`
+- `rg -n '"level":"(error|warn)"'`
 
+非構造ログの場合は、接頭辞や定型フォーマットに合わせたパターンを使う。
+
+- `rg -n '^\[ERROR\]'`
+- `rg -n '^\[WARN\]'`
