@@ -18,6 +18,11 @@ export class HistoryStore {
     return path.join(this.threadDir(threadId), "messages.jsonl");
   }
 
+  async deleteThread(threadId: string) {
+    const dir = this.threadDir(threadId);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+
   async appendMessage(threadId: string, message: ShogunMessage) {
     const logPath = this.logPath(threadId);
     await ensureDir(path.dirname(logPath));

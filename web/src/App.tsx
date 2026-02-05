@@ -3,6 +3,7 @@ import type { AgentSnapshot, ShogunMessage, ThreadInfo } from "@ai-shogun/shared
 import {
   connectWs,
   createThread,
+  deleteThread,
   fetchUiConfig,
   listAgents,
   listMessages,
@@ -79,10 +80,13 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [creatingThread, setCreatingThread] = useState(false);
+  const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [visibleAgents, setVisibleAgents] = useState<Set<string>>(initialVisibleAgents);
   const [error, setError] = useState<string | null>(null);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const selectedThreadRef = useRef<string | null>(null);
+  const selectionTokenRef = useRef(0);
+  const pendingSelectionRef = useRef<string | null>(null);
   const creatingThreadRef = useRef(false);
 
   useEffect(() => {
@@ -110,15 +114,18 @@ export default function App() {
         if (stopped) return;
         setThreads(threadList);
         setAgents(agentList);
-        if (selectedThreadRef.current) {
-          const threadMessages = await listMessages(selectedThreadRef.current);
+        const currentId = pendingSelectionRef.current ?? selectedThreadRef.current;
+        if (currentId && threadList.some((thread) => thread.id === currentId) && !pendingSelectionRef.current) {
+          const token = selectionTokenRef.current;
+          const threadMessages = await listMessages(currentId);
           if (stopped) return;
+          if (selectionTokenRef.current !== token || pendingSelectionRef.current) {
+            return;
+          }
           setMessages(threadMessages);
           return;
         }
-        if (threadList.length > 0) {
-          await handleSelectThread(threadList[0].id);
-        }
+        await ensureValidSelection(threadList);
       } catch {
         // Ignore reconnect sync failures; next reconnect will retry.
       }
@@ -126,7 +133,10 @@ export default function App() {
 
     const connect = () => {
       ws = connectWs({
-        onThreads: (data) => setThreads(data),
+        onThreads: (data) => {
+          setThreads(data);
+          void ensureValidSelection(data);
+        },
         onAgentStatus: (data) => setAgents(data),
         onMessage: (message) => {
           setMessages((prev) => {
@@ -198,17 +208,47 @@ export default function App() {
     return `${name} (${agentId})`;
   };
 
+  const clearSelection = () => {
+    selectionTokenRef.current += 1;
+    pendingSelectionRef.current = null;
+    setSelectedThreadId(null);
+    selectedThreadRef.current = null;
+    setMessages([]);
+  };
+
   const handleSelectThread = async (threadId: string) => {
+    const token = selectionTokenRef.current + 1;
+    selectionTokenRef.current = token;
+    pendingSelectionRef.current = threadId;
     try {
       await selectThread(threadId);
+      if (selectionTokenRef.current !== token) {
+        return false;
+      }
       const threadMessages = await listMessages(threadId);
+      if (selectionTokenRef.current !== token) {
+        return false;
+      }
       setSelectedThreadId(threadId);
       selectedThreadRef.current = threadId;
       setMessages(threadMessages);
+      pendingSelectionRef.current = null;
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "スレッド選択に失敗しました");
+      if (selectionTokenRef.current === token) {
+        pendingSelectionRef.current = null;
+        setError(err instanceof Error ? err.message : "スレッド選択に失敗しました");
+      }
       return false;
+    }
+  };
+
+  const ensureValidSelection = async (nextThreads: ThreadInfo[]) => {
+    const currentId = pendingSelectionRef.current ?? selectedThreadRef.current;
+    if (currentId && nextThreads.some((thread) => thread.id === currentId)) return;
+    clearSelection();
+    if (nextThreads.length > 0) {
+      await handleSelectThread(nextThreads[0].id);
     }
   };
 
@@ -237,6 +277,22 @@ export default function App() {
     } finally {
       creatingThreadRef.current = false;
       setCreatingThread(false);
+    }
+  };
+
+  const handleDeleteThread = async (threadId: string) => {
+    if (deletingThreadId) return;
+    setDeletingThreadId(threadId);
+    setError(null);
+    try {
+      await deleteThread(threadId);
+      const nextThreads = threads.filter((thread) => thread.id !== threadId);
+      setThreads(nextThreads);
+      await ensureValidSelection(nextThreads);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "スレッド削除に失敗しました");
+    } finally {
+      setDeletingThreadId(null);
     }
   };
 
@@ -338,19 +394,30 @@ export default function App() {
           {creatingThread ? "作成中..." : "+ 新規スレッド"}
         </button>
         <div className="thread-list">
-          {threads.map((thread) => (
-            <button
-              key={thread.id}
-              type="button"
-              className={`thread-item ${thread.id === selectedThreadId ? "active" : ""}`}
-              onClick={() => handleSelectThread(thread.id)}
-            >
-              <div>
-                <p className="thread-title">{thread.title}</p>
-                <p className="thread-date">{formatTime(thread.updatedAt)}</p>
+          {threads.map((thread) => {
+            const isActive = thread.id === selectedThreadId;
+            const isDeleting = deletingThreadId === thread.id;
+            return (
+              <div key={thread.id} className={`thread-item ${isActive ? "active" : ""}`}>
+                <button type="button" className="thread-select" onClick={() => handleSelectThread(thread.id)}>
+                  <div>
+                    <p className="thread-title">{thread.title}</p>
+                    <p className="thread-date">{formatTime(thread.updatedAt)}</p>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="thread-delete"
+                  onClick={() => handleDeleteThread(thread.id)}
+                  disabled={Boolean(deletingThreadId)}
+                  aria-label={`${thread.title}を削除`}
+                  title="削除"
+                >
+                  {isDeleting ? "削除中..." : "削除"}
+                </button>
               </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
         <div className="sidebar-foot">
           <button className="danger" type="button" onClick={handleStop}>

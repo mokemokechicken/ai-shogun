@@ -262,6 +262,25 @@ const main = async () => {
     res.json({ ok: true });
   });
 
+  app.delete("/api/threads/:id", async (req, res) => {
+    const threadId = req.params.id;
+    if (!stateStore.getThread(threadId)) {
+      res.status(404).json({ error: "thread not found" });
+      return;
+    }
+    try {
+      await historyStore.deleteThread(threadId);
+    } catch (error) {
+      logger.error("failed to delete thread history", { threadId, error });
+      res.status(500).json({ error: "failed to delete thread" });
+      return;
+    }
+    stateStore.deleteThread(threadId);
+    await stateStore.save();
+    broadcast(wss, { type: "threads", threads: stateStore.listThreads().map(toThreadInfo) });
+    res.json({ ok: true });
+  });
+
   app.get("/api/threads/:id/messages", async (req, res) => {
     const threadId = req.params.id;
     if (!stateStore.getThread(threadId)) {

@@ -34,6 +34,13 @@ export const selectThread = async (threadId: string): Promise<void> => {
   await fetch(`${apiBase}/api/threads/${threadId}/select`, { method: "POST" });
 };
 
+export const deleteThread = async (threadId: string): Promise<void> => {
+  const res = await fetch(`${apiBase}/api/threads/${threadId}`, { method: "DELETE" });
+  if (!res.ok) {
+    throw new Error("Failed to delete thread");
+  }
+};
+
 export const listMessages = async (threadId: string): Promise<ShogunMessage[]> => {
   const res = await fetch(`${apiBase}/api/threads/${threadId}/messages`);
   if (!res.ok) {

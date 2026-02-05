@@ -105,16 +105,55 @@ pre {
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.08);
   border-radius: 14px;
-  padding: 12px;
+  padding: 6px;
   color: inherit;
-  text-align: left;
-  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   transition: border 0.2s ease, background 0.2s ease;
 }
 
 .thread-item.active {
   border-color: rgba(255, 255, 255, 0.45);
   background: rgba(255, 255, 255, 0.2);
+}
+
+.thread-select {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 6px;
+}
+
+.thread-select:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.45);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+.thread-delete {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(209, 73, 43, 0.2);
+  color: #ffd9d0;
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease, border 0.2s ease;
+  white-space: nowrap;
+}
+
+.thread-delete:hover {
+  background: rgba(209, 73, 43, 0.35);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.thread-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .thread-title {

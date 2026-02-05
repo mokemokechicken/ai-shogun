@@ -85,6 +85,16 @@ export class StateStore {
     return this.state.lastActiveThreadId;
   }
 
+  deleteThread(threadId: string) {
+    if (!this.state.threads[threadId]) return false;
+    delete this.state.threads[threadId];
+    this.state.threadOrder = this.state.threadOrder.filter((id) => id !== threadId);
+    if (this.state.lastActiveThreadId === threadId) {
+      this.state.lastActiveThreadId = this.state.threadOrder[0];
+    }
+    return true;
+  }
+
   async save() {
     const run = async () => {
       await writeJsonFile(this.filePath, this.state);
