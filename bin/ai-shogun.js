@@ -99,6 +99,9 @@ const webPort = options.webPort ?? parsePort(process.env.SHOGUN_WEB_PORT ?? "409
 const serverDist = path.join(appDir, "server", "dist", "index.js");
 const sharedDist = path.join(appDir, "shared", "dist", "index.js");
 const webDist = path.join(appDir, "web", "dist", "index.html");
+const serverSrc = path.join(appDir, "server", "src");
+const sharedSrc = path.join(appDir, "shared", "src");
+const webSrc = path.join(appDir, "web", "src");
 
 const hasServerDist = fs.existsSync(serverDist);
 const hasSharedDist = fs.existsSync(sharedDist);
@@ -127,16 +130,44 @@ const ensureNodeModules = (label, dirPath) => {
   runSync(label, npmCmd, ["--prefix", dirPath, "install"]);
 };
 
+const getLatestMtime = (targetPath) => {
+  if (!fs.existsSync(targetPath)) return 0;
+  const stat = fs.statSync(targetPath);
+  if (stat.isFile()) {
+    return stat.mtimeMs;
+  }
+  if (!stat.isDirectory()) return 0;
+  let latest = stat.mtimeMs;
+  for (const entry of fs.readdirSync(targetPath)) {
+    const entryPath = path.join(targetPath, entry);
+    const entryStat = fs.statSync(entryPath);
+    if (entryStat.isDirectory()) {
+      latest = Math.max(latest, getLatestMtime(entryPath));
+    } else {
+      latest = Math.max(latest, entryStat.mtimeMs);
+    }
+  }
+  return latest;
+};
+
+const isStale = (distPath, srcPath) => {
+  if (!fs.existsSync(distPath)) return true;
+  if (!fs.existsSync(srcPath)) return false;
+  const distMtime = fs.statSync(distPath).mtimeMs;
+  const srcMtime = getLatestMtime(srcPath);
+  return srcMtime > distMtime;
+};
+
 const ensureBuild = () => {
-  if (!hasSharedDist) {
+  if (!hasSharedDist || isStale(sharedDist, sharedSrc)) {
     ensureNodeModules("shared install", path.join(appDir, "shared"));
     runSync("shared build", npmCmd, ["--prefix", path.join(appDir, "shared"), "run", "build"]);
   }
-  if (!hasServerDist) {
+  if (!hasServerDist || isStale(serverDist, serverSrc)) {
     ensureNodeModules("server install", path.join(appDir, "server"));
     runSync("server build", npmCmd, ["--prefix", path.join(appDir, "server"), "run", "build"]);
   }
-  if (!useWebDev && !hasWebDist) {
+  if (!useWebDev && (!hasWebDist || isStale(webDist, webSrc))) {
     ensureNodeModules("web install", path.join(appDir, "web"));
     runSync("web build", npmCmd, ["--prefix", path.join(appDir, "web"), "run", "build"]);
   }
