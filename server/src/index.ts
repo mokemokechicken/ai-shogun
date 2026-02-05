@@ -133,6 +133,7 @@ const main = async () => {
   const stateStore = await StateStore.load(path.join(config.baseDir, "state.json"));
   const historyStore = new HistoryStore(config.historyDir);
   const agentManager = new AgentManager(config, stateStore, logger);
+  await agentManager.resumePendingWaits(historyStore);
 
   logger.info("server boot", {
     rootDir,

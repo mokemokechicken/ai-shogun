@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { buildSystemPrompt } from "../prompt.js";
 import { writeMessageFile } from "../message/writer.js";
+import type { HistoryStore } from "../history/store.js";
 import type { StateStore } from "../state/store.js";
 import type { LlmProvider, ProviderProgressUpdate, ProviderResponse } from "../provider/types.js";
 import type { Logger } from "../logger.js";
@@ -303,6 +304,67 @@ export class AgentRuntime {
   constructor(options: AgentRuntimeOptions) {
     this.options = options;
     this.waitStore = new WaitStore(options.baseDir);
+  }
+
+  async resumePendingWaits(historyStore: HistoryStore) {
+    const records = await this.waitStore.list();
+    const resumable = records.filter(
+      (record) =>
+        record.version === 1 &&
+        record.agentId === this.options.agentId &&
+        (record.status === "pending" || record.status === "received" || record.status === "timeout")
+    );
+    if (resumable.length === 0) return;
+
+    const messageCache = new Map<string, ShogunMessage[]>();
+
+    for (const record of resumable) {
+      const thread = this.options.stateStore.getThread(record.threadId);
+      if (!thread) {
+        this.options.logger?.warn("resume wait skipped: thread missing", {
+          agentId: this.options.agentId,
+          threadId: record.threadId,
+          messageId: record.messageId
+        });
+        continue;
+      }
+
+      let messages = messageCache.get(record.threadId);
+      if (!messages) {
+        messages = await historyStore.listMessages(record.threadId);
+        messageCache.set(record.threadId, messages);
+      }
+
+      const message = messages.find((entry) => entry.id === record.messageId);
+      if (!message) {
+        this.options.logger?.warn("resume wait skipped: message missing", {
+          agentId: this.options.agentId,
+          threadId: record.threadId,
+          messageId: record.messageId
+        });
+        continue;
+      }
+
+      if (this.queue.some((entry) => entry.id === message.id)) {
+        continue;
+      }
+
+      this.options.logger?.info("resuming wait message", {
+        agentId: this.options.agentId,
+        threadId: record.threadId,
+        messageId: record.messageId,
+        status: record.status
+      });
+
+      void this.enqueue(message).catch((error) => {
+        this.options.logger?.error("resume wait enqueue failed", {
+          agentId: this.options.agentId,
+          threadId: record.threadId,
+          messageId: record.messageId,
+          error
+        });
+      });
+    }
   }
 
   private touchStatus() {

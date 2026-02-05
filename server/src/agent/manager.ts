@@ -8,6 +8,7 @@ import { AgentRuntime } from "./runtime.js";
 import { buildAllowedRecipients } from "./permissions.js";
 import { buildSystemPrompt } from "../prompt.js";
 import type { Logger } from "../logger.js";
+import type { HistoryStore } from "../history/store.js";
 
 interface AgentDefinition {
   id: AgentId;
@@ -96,6 +97,10 @@ export class AgentManager {
 
   onStatusChange(listener: () => void) {
     this.statusListeners.push(listener);
+  }
+
+  async resumePendingWaits(historyStore: HistoryStore) {
+    await Promise.all(Array.from(this.runtimes.values()).map((runtime) => runtime.resumePendingWaits(historyStore)));
   }
 
   private notifyStatus() {

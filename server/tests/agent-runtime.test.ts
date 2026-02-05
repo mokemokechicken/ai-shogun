@@ -5,6 +5,7 @@ import path from "node:path";
 import type { LlmProvider, ProviderRunInput, ProviderResponse, ProviderThreadHandle } from "../src/provider/types";
 import { AgentRuntime } from "../src/agent/runtime";
 import { StateStore } from "../src/state/store";
+import { HistoryStore } from "../src/history/store";
 
 class FakeProvider implements LlmProvider {
   kind = "fake";
@@ -569,8 +570,19 @@ describe("agent runtime", () => {
     });
     const thread = stateStore1.createThread("Test");
     await stateStore1.save();
+    const historyStore = new HistoryStore(path.join(tempDir, "history"));
 
     const provider = new DurableWaitProvider();
+    const initialMessage: ShogunMessage = {
+      id: "msg-1",
+      threadId: thread.id,
+      from: "shogun",
+      to: "karou",
+      title: "test",
+      body: "do it",
+      createdAt: new Date().toISOString()
+    };
+    await historyStore.appendMessage(thread.id, initialMessage);
 
     const runtime1 = new AgentRuntime({
       agentId: "karou",
@@ -583,15 +595,7 @@ describe("agent runtime", () => {
       workingDirectory: tempDir
     });
 
-    void runtime1.enqueue({
-      id: "msg-1",
-      threadId: thread.id,
-      from: "shogun",
-      to: "karou",
-      title: "test",
-      body: "do it",
-      createdAt: new Date().toISOString()
-    });
+    void runtime1.enqueue(initialMessage);
 
     const waitPath = path.join(tempDir, "waits", "pending", `${thread.id}__karou.json`);
     await waitForPath(waitPath);
@@ -618,15 +622,7 @@ describe("agent runtime", () => {
       createdAt: new Date().toISOString()
     });
 
-    await runtime2.enqueue({
-      id: "msg-1",
-      threadId: thread.id,
-      from: "shogun",
-      to: "karou",
-      title: "test",
-      body: "do it",
-      createdAt: new Date().toISOString()
-    });
+    await runtime2.resumePendingWaits(historyStore);
 
     const outDir = path.join(tempDir, "message_to", "shogun", "from", "karou");
     await waitForFile(outDir);
