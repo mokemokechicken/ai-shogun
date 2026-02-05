@@ -838,6 +838,7 @@ export class AgentRuntime {
         status: existingWait.status,
         waitKey
       });
+      const restartNotice = `【SYSTEM通知】サーバーが再起動しました（${new Date().toISOString()}）。待機を再開します。`;
       const timeoutMs = existingWait.timeoutMs;
       const waited =
         existingWait.status === "received" && existingWait.receivedMessage
@@ -846,7 +847,7 @@ export class AgentRuntime {
             ? null
             : await this.waitForMessage(primary.threadId, timeoutMs);
       const payload = waited ? { status: "message", message: waited } : { status: "timeout", timeoutMs };
-      input = `TOOL_RESULT waitForMessage: ${JSON.stringify(payload)}`;
+      input = `${restartNotice}\n\nTOOL_RESULT waitForMessage: ${JSON.stringify(payload)}`;
     }
 
     for (let i = 0; i < maxLoops; i += 1) {
