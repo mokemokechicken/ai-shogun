@@ -163,6 +163,7 @@ const main = async () => {
     broadcast(wss, { type: "agent_status", agents: agentManager.getStatuses() });
   });
 
+  let restarting = false;
   const messageWatcher = await startMessageWatcher(
     config.baseDir,
     config.historyDir,
@@ -170,6 +171,15 @@ const main = async () => {
     stateStore,
     {
       onMessage: async (message: ShogunMessage) => {
+        if (restarting) {
+          logger.info("message skipped during restart", {
+            threadId: message.threadId,
+            from: message.from,
+            to: message.to,
+            title: message.title
+          });
+          return;
+        }
         stateStore.updateThread(message.threadId, { updatedAt: new Date().toISOString() });
         stateStore.setLastActiveThread(message.threadId);
         await stateStore.save();
@@ -185,13 +195,28 @@ const main = async () => {
           to: message.to,
           title: message.title
         });
-        await agentManager.enqueue(message.to, message);
+        try {
+          await agentManager.enqueue(message.to, message);
+        } catch (error) {
+          const isRestartStop =
+            error instanceof Error &&
+            (error.message.includes("agent stopped") || error.message.includes("agent aborted: stop"));
+          if (restarting && isRestartStop) {
+            logger.info("message enqueue skipped during restart", {
+              threadId: message.threadId,
+              from: message.from,
+              to: message.to,
+              title: message.title
+            });
+            return;
+          }
+          throw error;
+        }
       }
     },
     logger
   );
 
-  let restarting = false;
   const restartWatcher = await startRestartWatcher(
     config.baseDir,
     {
