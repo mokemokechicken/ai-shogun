@@ -67,6 +67,7 @@ Core response rules (must follow):
 - Do not include "from"; it is filled automatically.
 - If you are unsure, still send a brief status update to your direct superior.
 - If you need to use tools (e.g., \`waitForMessage\`), output ONLY tool line(s) instead.
+- If you do not need to wait, you may output \`TOOL:nop\`.
 - If your final output does not include any TOOL line, it may be auto-sent to your direct superior.
 - If multiple messages are queued, they will be delivered as a batch with clear START/END markers and timestamps. Process each in order.
 - Before \`sendMessage\` is executed, pending messages in the same thread are checked.
@@ -103,6 +104,8 @@ History location (reference only): ${historyDir}
 
 const shogunToolPrompt = `
 Tool calls (shogun only):
+- No-op:
+  TOOL:nop
 - To wait for a message, output exactly:
   TOOL:waitForMessage
   You may add a timeout: TOOL:waitForMessage timeoutMs=60000
@@ -126,6 +129,8 @@ Tool calls (shogun only):
 
 const karouToolPrompt = `
 Tool calls (karou only):
+- No-op:
+  TOOL:nop
 - To request ashigaru status, output exactly:
   TOOL:getAshigaruStatus
 - To wait for a message, output exactly:

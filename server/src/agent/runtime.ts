@@ -118,6 +118,9 @@ const parseJsonToolLine = (trimmed: string): ToolRequest | null => {
     if (toolName === "getAshigaruStatus") {
       return { name: "getAshigaruStatus" };
     }
+    if (toolName === "nop") {
+      return { name: "nop" };
+    }
     if (toolName === "waitForMessage") {
       return { name: "waitForMessage" };
     }
@@ -136,6 +139,9 @@ const parseJsonToolLine = (trimmed: string): ToolRequest | null => {
   const data = payload as Record<string, unknown>;
   if (toolName === "getAshigaruStatus") {
     return { name: "getAshigaruStatus" };
+  }
+  if (toolName === "nop") {
+    return { name: "nop" };
   }
   if (toolName === "waitForMessage") {
     const rawTimeout = data.timeoutMs;
@@ -190,6 +196,7 @@ const formatMessageBatchInput = (messages: ShogunMessage[]) => {
 
 type ToolRequest =
   | { name: "getAshigaruStatus" }
+  | { name: "nop" }
   | { name: "waitForMessage"; timeoutMs?: number }
   | { name: "interruptAgent"; to: AgentId[]; title?: string; body?: string }
   | { name: "sendMessage"; to: AgentId[]; title?: string; body?: string; bodyFile?: string };
@@ -206,6 +213,10 @@ const parseToolRequests = (output: string): ToolRequest[] => {
     }
     if (trimmed === "TOOL:getAshigaruStatus") {
       requests.push({ name: "getAshigaruStatus" });
+      continue;
+    }
+    if (trimmed === "TOOL:nop") {
+      requests.push({ name: "nop" });
       continue;
     }
     const interruptMatch = trimmed.match(interruptAgentRegex);
@@ -914,27 +925,32 @@ export class AgentRuntime {
             });
             continue;
           }
-          if (toolRequest.name === "getAshigaruStatus") {
-            if (this.options.role !== "karou") {
-              this.options.logger?.warn("tool ignored: getAshigaruStatus not allowed", {
-                agentId: this.options.agentId,
-                threadId
-              });
-              results.push({ tool: "getAshigaruStatus", status: "ignored" });
-              continue;
-            }
-            this.setActivity("アシガル状況取得中");
-            const status = this.options.getAshigaruStatus?.();
-            const idle = status?.idle ?? [];
-            const busy = status?.busy ?? [];
-            this.setActivity("アシガル状況取得完了");
-            results.push({ tool: "getAshigaruStatus", status: "ok", idle, busy });
-            continue;
-          }
-          if (toolRequest.name === "waitForMessage") {
-            if (this.options.role !== "karou" && this.options.role !== "shogun") {
-              this.options.logger?.warn("tool ignored: waitForMessage not allowed", {
-                agentId: this.options.agentId,
+      if (toolRequest.name === "getAshigaruStatus") {
+        if (this.options.role !== "karou") {
+          this.options.logger?.warn("tool ignored: getAshigaruStatus not allowed", {
+            agentId: this.options.agentId,
+            threadId
+          });
+          results.push({ tool: "getAshigaruStatus", status: "ignored" });
+          continue;
+        }
+        this.setActivity("アシガル状況取得中");
+        const status = this.options.getAshigaruStatus?.();
+        const idle = status?.idle ?? [];
+        const busy = status?.busy ?? [];
+        this.setActivity("アシガル状況取得完了");
+        results.push({ tool: "getAshigaruStatus", status: "ok", idle, busy });
+        continue;
+      }
+      if (toolRequest.name === "nop") {
+        this.setActivity("noop 実行");
+        results.push({ tool: "nop", status: "ok" });
+        continue;
+      }
+      if (toolRequest.name === "waitForMessage") {
+        if (this.options.role !== "karou" && this.options.role !== "shogun") {
+          this.options.logger?.warn("tool ignored: waitForMessage not allowed", {
+            agentId: this.options.agentId,
                 threadId
               });
               results.push({ tool: "waitForMessage", status: "ignored" });
@@ -1106,6 +1122,10 @@ export class AgentRuntime {
             const idle = (singleResult.idle as AgentId[] | undefined) ?? [];
             const busy = (singleResult.busy as AgentId[] | undefined) ?? [];
             input = `TOOL_RESULT getAshigaruStatus: idle=${idle.join(",")} busy=${busy.join(",")}`;
+            continue;
+          }
+          if (single?.name === "nop" && singleResult) {
+            input = `TOOL_RESULT nop: ${JSON.stringify(singleResult)}`;
             continue;
           }
           if (single?.name === "waitForMessage" && singleResult) {

@@ -209,6 +209,40 @@ class ToolOnlyProvider implements LlmProvider {
   }
 }
 
+class NopProvider implements LlmProvider {
+  kind = "nop";
+  private threadId = "nop-thread";
+
+  async createThread(options?: { workingDirectory: string; initialInput?: string }): Promise<ProviderThreadHandle> {
+    if (options?.initialInput) {
+      await this.sendMessage({ threadId: this.threadId, input: options.initialInput });
+    }
+    return { id: this.threadId };
+  }
+
+  resumeThread(threadId: string): ProviderThreadHandle {
+    this.threadId = threadId;
+    return { id: threadId };
+  }
+
+  async sendMessage(input: ProviderRunInput): Promise<ProviderResponse> {
+    if (input.input.includes("ACK")) {
+      return { outputText: "ACK" };
+    }
+    if (input.input.includes("TOOL_RESULT sendMessage")) {
+      return { outputText: "" };
+    }
+    if (input.input.includes("TOOL_RESULT nop")) {
+      return { outputText: "TOOL:sendMessage to=karou title=report body='nop-ok'" };
+    }
+    return { outputText: "TOOL:nop" };
+  }
+
+  async cancel(): Promise<void> {
+    return;
+  }
+}
+
 class DurableWaitProvider implements LlmProvider {
   kind = "durable-wait";
   private threadId = "durable-wait-thread";
@@ -558,6 +592,46 @@ describe("agent runtime", () => {
     await new Promise((resolve) => setTimeout(resolve, 400));
     const entries = await fs.readdir(outDir).catch(() => []);
     expect(entries.some((entry) => entry.endsWith(".md"))).toBe(false);
+  });
+
+  it("supports nop tool output", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "shogun-agent-"));
+    const stateStore = new StateStore(path.join(tempDir, "state.json"), {
+      version: 1,
+      threads: {},
+      threadOrder: []
+    });
+    const thread = stateStore.createThread("Test");
+    await stateStore.save();
+
+    const runtime = new AgentRuntime({
+      agentId: "ashigaru1",
+      role: "ashigaru",
+      baseDir: tempDir,
+      historyDir: path.join(tempDir, "history"),
+      allowedRecipients: new Set(["karou"]),
+      stateStore,
+      provider: new NopProvider(),
+      workingDirectory: tempDir
+    });
+
+    runtime.enqueue({
+      id: "msg-1",
+      threadId: thread.id,
+      from: "karou",
+      to: "ashigaru1",
+      title: "test",
+      body: "do it",
+      createdAt: new Date().toISOString()
+    });
+
+    const outDir = path.join(tempDir, "message_to", "karou", "from", "ashigaru1");
+    await waitForFile(outDir);
+    const entries = await fs.readdir(outDir);
+    const fileName = entries.find((entry) => entry.endsWith(".md"));
+    expect(fileName).toBeDefined();
+    const content = await fs.readFile(path.join(outDir, fileName!), "utf-8");
+    expect(content.trim()).toBe("nop-ok");
   });
 
   it("restores wait state after restart", async () => {
