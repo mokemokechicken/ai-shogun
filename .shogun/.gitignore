@@ -8,3 +8,4 @@ tmp/
 waits/
 message_ledger.json
 *.bak
+*.tmp
